@@ -613,7 +613,8 @@ class SelfHealingEngine:
                     plan_dir = Path(settings.TERRAFORM_WORKSPACE) / rec.plan_id
                     if plan_dir.exists():
                         from app.engines.terraform_generator import tf_generator
-                        tf_generator.generate(patched_ir, environment="local", plan_id=rec.plan_id)
+                        real_env = getattr(plan_rec, "environment", None) or (patched_ir.cloud.environment if patched_ir.cloud else None) or "local"
+                        tf_generator.generate(patched_ir, environment=real_env, plan_id=rec.plan_id)
                         new_hcl = (plan_dir / "main.tf").read_text(encoding="utf-8")
                         plan_rec.terraform_code = new_hcl
                 except Exception as e:

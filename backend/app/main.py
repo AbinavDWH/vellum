@@ -105,35 +105,14 @@ def format_plan_response(r: PlanRecord, db: Optional[Session] = None) -> PlanRes
     summary = approval_engine.format_plan_preview(ir)
     security_findings = json.loads(r.security_checks_json) if r.security_checks_json else []
 
-    target_env = (ir.cloud.environment if ir.cloud else None) or "local"
-    target_region = (ir.cloud.region if ir.cloud else None) or "us-east-1"
-    account_id = None
-    target_label = "LocalStack (Simulation)" if target_env == "local" else f"AWS Cloud ({target_env.upper()}) • Region: {target_region}"
+    from app.target import resolve_target
 
-    conn_id = r.connection_id
-    if conn_id or target_env != "local":
-        active_db = db
-        close_db = False
-        if active_db is None:
-            from app.database import SessionLocal
-            active_db = SessionLocal()
-            close_db = True
-        try:
-            conn = None
-            if conn_id:
-                conn = active_db.query(ConnectionRecord).filter(ConnectionRecord.id == conn_id, ConnectionRecord.is_deleted == False).first()
-            if not conn and target_env in ["prod", "staging"]:
-                conn = active_db.query(ConnectionRecord).filter(ConnectionRecord.environment == target_env, ConnectionRecord.is_deleted == False).first()
-            if conn:
-                target_env = conn.environment or target_env
-                target_region = conn.region or target_region
-                account_id = conn.account_id
-                target_label = f"AWS Cloud ({target_env.upper()}) • Account: {account_id or 'unknown'} ({target_region})"
-        except Exception:
-            pass
-        finally:
-            if close_db:
-                active_db.close()
+    target = resolve_target(plan=r, ir=ir, db=db, allow_missing=True)
+    target_env = target.environment or (ir.cloud.environment if ir.cloud else None) or "local"
+    target_region = target.region
+    account_id = target.account_id
+    target_label = target.target_label
+    conn_id = target.connection_id or r.connection_id
 
     return PlanResponse(
         plan_id=r.plan_id,
@@ -498,7 +477,7 @@ def plan_from_session_requirements(
     response = orchestrator.plan_from_requirements(
         session_id=session_id,
         cloud_provider=cloud_provider or "aws",
-        environment=environment or "local",
+        environment=environment,
         db=db,
         model=model,
         provider=provider,
@@ -598,7 +577,7 @@ def handle_chat(request: ChatRequest, db: Session = Depends(get_db)):
         response = orchestrator.process_natural_language(
             prompt=request.prompt,
             cloud_provider=request.cloud_provider or "aws",
-            environment=request.environment or "local",
+            environment=request.environment,
             session_id=session_id,
             db=db,
             model=request.model,
@@ -944,32 +923,14 @@ def reexecute_plan(
     ir_dict = json.loads(plan.ir_json)
     ir = UniversalIR(**ir_dict)
 
-    plan_env = ir.cloud.environment if ir.cloud else "local"
-    aws_access_key = None
-    aws_secret_key = None
-    region = (ir.cloud.region if ir.cloud else None) or "us-east-1"
+    from app.target import resolve_target
 
-    if plan.connection_id:
-        conn = db.query(ConnectionRecord).filter(ConnectionRecord.id == plan.connection_id).first()
-        if conn and not conn.is_deleted:
-            plan_env = conn.environment or plan_env
-            region = conn.region or region
-            if conn.encrypted_access_key and conn.encrypted_secret_key:
-                aws_access_key = credential_manager.decrypt(conn.encrypted_access_key)
-                aws_secret_key = credential_manager.decrypt(conn.encrypted_secret_key)
-
-    if plan_env in ["prod", "staging"] and not aws_access_key:
-        active_conn = (
-            db.query(ConnectionRecord)
-            .filter(ConnectionRecord.environment == plan_env, ConnectionRecord.is_deleted == False)
-            .order_by(ConnectionRecord.updated_at.desc())
-            .first()
-        )
-        if active_conn and active_conn.encrypted_access_key and active_conn.encrypted_secret_key:
-            aws_access_key = credential_manager.decrypt(active_conn.encrypted_access_key)
-            aws_secret_key = credential_manager.decrypt(active_conn.encrypted_secret_key)
-            if active_conn.region:
-                region = active_conn.region
+    target = resolve_target(plan=plan, ir=ir, db=db, strict_prod=False, allow_missing=True)
+    plan_env = target.environment or "local"
+    region = target.region
+    aws_access_key = target.aws_access_key
+    aws_secret_key = target.aws_secret_key
+    account_id = target.account_id
 
     # 2. Dry-run verification (does not apply any changes)
     report = verification_engine.verify(
@@ -979,6 +940,7 @@ def reexecute_plan(
         aws_access_key=aws_access_key,
         aws_secret_key=aws_secret_key,
         region=region,
+        account_id=account_id,
         db=db,
     )
     has_drift = report.get("drift_detected", False) or len(report.get("missing_resources", [])) > 0
@@ -1135,43 +1097,14 @@ def verify_plan(plan_id: str, db: Session = Depends(get_db)):
 
     ir = UniversalIR(**json.loads(plan.ir_json))
 
-    plan_env = ir.cloud.environment if ir.cloud else "local"
-    aws_access_key = None
-    aws_secret_key = None
-    region = (ir.cloud.region if ir.cloud else None) or "us-east-1"
+    from app.target import resolve_target
 
-    if plan.connection_id:
-        conn = db.query(ConnectionRecord).filter(ConnectionRecord.id == plan.connection_id).first()
-        if conn and not conn.is_deleted:
-            plan_env = conn.environment or plan_env
-            region = conn.region or region
-            if conn.encrypted_access_key and conn.encrypted_secret_key:
-                aws_access_key = credential_manager.decrypt(conn.encrypted_access_key)
-                aws_secret_key = credential_manager.decrypt(conn.encrypted_secret_key)
-
-    if plan_env in ["prod", "staging"] and not aws_access_key:
-        active_conn = (
-            db.query(ConnectionRecord)
-            .filter(
-                ConnectionRecord.environment == plan_env,
-                ConnectionRecord.is_deleted == False,
-                ConnectionRecord.status.in_(["connected", "active"]),
-            )
-            .order_by(ConnectionRecord.updated_at.desc())
-            .first()
-        )
-        if not active_conn:
-            active_conn = (
-                db.query(ConnectionRecord)
-                .filter(ConnectionRecord.environment == plan_env, ConnectionRecord.is_deleted == False)
-                .order_by(ConnectionRecord.updated_at.desc())
-                .first()
-            )
-        if active_conn and active_conn.encrypted_access_key and active_conn.encrypted_secret_key:
-            aws_access_key = credential_manager.decrypt(active_conn.encrypted_access_key)
-            aws_secret_key = credential_manager.decrypt(active_conn.encrypted_secret_key)
-            if active_conn.region:
-                region = active_conn.region
+    target = resolve_target(plan=plan, ir=ir, db=db, strict_prod=False, allow_missing=True)
+    plan_env = target.environment or "local"
+    region = target.region
+    aws_access_key = target.aws_access_key
+    aws_secret_key = target.aws_secret_key
+    account_id = target.account_id
 
     report = verification_engine.verify(
         plan_id=plan_id,
@@ -1180,6 +1113,7 @@ def verify_plan(plan_id: str, db: Session = Depends(get_db)):
         aws_access_key=aws_access_key,
         aws_secret_key=aws_secret_key,
         region=region,
+        account_id=account_id,
         db=db,
     )
 

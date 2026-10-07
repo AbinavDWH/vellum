@@ -42,13 +42,26 @@ def client(db_session):
 
 @pytest.fixture(autouse=True)
 def clean_test_connections(db_session):
-    db_session.query(ConnectionRecord).filter(ConnectionRecord.id != "conn_sandbox_main").delete()
+    db_session.query(ConnectionRecord).delete()
     db_session.query(PlanRecord).delete()
-    main_conn = db_session.query(ConnectionRecord).filter(ConnectionRecord.id == "conn_sandbox_main").first()
-    if main_conn:
-        main_conn.services_json = json.dumps(["s3", "ec2", "vpc", "rds", "iam", "sts", "cloudwatch"])
-        main_conn.restart_pending = False
-        main_conn.status = "connected"
+    test_key = "AKIAIOSFODNN7EXAMPLE"
+    test_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    main_conn = ConnectionRecord(
+        id="conn_test_module17_local",
+        name="test-local-main",
+        provider="aws",
+        environment="local",
+        auth_method="access_key",
+        region="us-east-1",
+        key_prefix=test_key[:4],
+        key_last4=test_key[-4:],
+        encrypted_access_key=credential_manager.encrypt(test_key),
+        encrypted_secret_key=credential_manager.encrypt(test_secret),
+        services_json=json.dumps(["s3", "ec2", "vpc", "rds", "iam", "sts", "cloudwatch"]),
+        status="connected",
+        account_id="000000000000",
+    )
+    db_session.add(main_conn)
     db_session.commit()
     yield
 

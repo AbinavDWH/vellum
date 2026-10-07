@@ -13,6 +13,32 @@ from app.models import PlanRecord, ConnectionRecord
 from app.credentials.manager import credential_manager
 
 
+@pytest.fixture
+def seed_test_prod_connection(db_session):
+    test_key = "AKIAIOSFODNN7EXAMPLE"
+    test_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    prod_conn = ConnectionRecord(
+        id="conn_test_m18_prod",
+        name="test-prod-connection",
+        provider="aws",
+        environment="prod",
+        auth_method="access_key",
+        region="us-east-1",
+        account_id="123456789012",
+        status="active",
+        key_prefix=test_key[:4],
+        key_last4=test_key[-4:],
+        encrypted_access_key=credential_manager.encrypt(test_key),
+        encrypted_secret_key=credential_manager.encrypt(test_secret),
+        services_json=json.dumps(["s3", "ec2", "vpc", "rds", "iam", "sts"]),
+    )
+    db_session.add(prod_conn)
+    db_session.commit()
+    yield prod_conn
+    db_session.query(ConnectionRecord).filter(ConnectionRecord.id == "conn_test_m18_prod").delete()
+    db_session.commit()
+
+
 def test_m18_s3_create_bucket_region_matrix():
     """
     Test Fix 3: S3 CreateBucket must omit CreateBucketConfiguration for us-east-1,
@@ -68,7 +94,7 @@ def test_m18_direct_boto3_prohibited_in_prod():
     assert "Direct boto3 provisioning is prohibited in PROD/STAGING" in str(exc_info.value)
 
 
-def test_m18_prod_timeout_reconciling_and_no_boto3_fallback(tmp_path, db_session):
+def test_m18_prod_timeout_reconciling_and_no_boto3_fallback(tmp_path, db_session, seed_test_prod_connection):
     """
     Test Fix 1 & 2: When terraform apply times out in PROD:
     - Child process is deterministically reaped.
@@ -120,7 +146,7 @@ def test_m18_prod_timeout_reconciling_and_no_boto3_fallback(tmp_path, db_session
         mock_boto.assert_not_called()
 
 
-def test_m18_prod_apply_partial_failure_honest_status(tmp_path, db_session):
+def test_m18_prod_apply_partial_failure_honest_status(tmp_path, db_session, seed_test_prod_connection):
     """
     Test Fix 4: Partial apply failure in PROD returns status 'failed' (never 'completed'),
     reconciles state, and provides operator recovery options.

@@ -1073,7 +1073,7 @@ class HybridLLMClient:
                     messages,
                     json_mode=True,
                     temperature=0.1,
-                    max_tokens=2048,
+                    max_tokens=settings.LM_STUDIO_MAX_TOKENS,
                     model=model,
                     provider=provider,
                 )
@@ -1096,7 +1096,12 @@ class HybridLLMClient:
                     })
 
         logger.error("All IR generation attempts failed, using robust fallback", error=str(last_error))
-        return self._generate_fallback_ir(user_requirement, requirements_md=requirements_md)
+        fallback_ir = self._generate_fallback_ir(user_requirement, requirements_md=requirements_md)
+        fallback_warning = "⚠️ [AI FALLBACK] AI model generation failed. Plan was generated using a rule-based fallback template."
+        if fallback_warning not in fallback_ir.assumptions:
+            fallback_ir.assumptions.insert(0, fallback_warning)
+        setattr(fallback_ir, "_is_fallback", True)
+        return fallback_ir
 
     def revise_plan(
         self,
@@ -1122,6 +1127,7 @@ class HybridLLMClient:
             messages,
             json_mode=True,
             temperature=0.1,
+            max_tokens=settings.LM_STUDIO_MAX_TOKENS,
             model=model,
             provider=provider,
         )
@@ -1132,6 +1138,14 @@ class HybridLLMClient:
         from app.validation.scope_fidelity import ScopeFidelityValidator
         intents = ScopeFidelityValidator.analyze_user_intent(req)
         lowered = req.lower().strip()
+
+        target_env = "local"
+        if requirements_md:
+            m_env = re.search(r'\*\*Environment\*\*:\s*([a-zA-Z0-9_-]+)', requirements_md, re.IGNORECASE)
+            if m_env:
+                target_env = m_env.group(1).lower()
+
+        fallback_notice = "⚠️ [AI FALLBACK] AI model generation failed. Plan was generated using a rule-based fallback template."
 
         # 1. Static site deployment intent (e.g. "host static site from github X")
         if intents["wants_static_site"]:
@@ -1159,11 +1173,14 @@ class HybridLLMClient:
                 cloud={
                     "provider": "aws",
                     "region": "us-east-1",
-                    "environment": "local",
+                    "environment": target_env,
                     "resources": res,
                 },
                 dependencies=[],
-                assumptions=["Required because: static site hosting requires S3 website configuration and public read policy"],
+                assumptions=[
+                    fallback_notice,
+                    "Required because: static site hosting requires S3 website configuration and public read policy"
+                ],
                 estimated_cost_monthly=5.0,
                 risk_level="low",
             )
@@ -1209,11 +1226,14 @@ class HybridLLMClient:
                 cloud={
                     "provider": "aws",
                     "region": "us-east-1",
-                    "environment": "local",
+                    "environment": target_env,
                     "resources": res,
                 },
                 dependencies=["main_igw"],
-                assumptions=["Required because: public subnet requires an Internet Gateway for internet access"],
+                assumptions=[
+                    fallback_notice,
+                    "Required because: public subnet requires an Internet Gateway for internet access"
+                ],
                 estimated_cost_monthly=0.0,
                 risk_level="low",
             )
@@ -1254,7 +1274,7 @@ class HybridLLMClient:
                     "foreign_keys": []
                 })
 
-            assumptions = [f"Relational database schema for {db_provider}"]
+            assumptions = [fallback_notice, f"Relational database schema for {db_provider}"]
             if "db.t4g.small" in full_text:
                 assumptions.append("Instance sizing choice: db.t4g.small (Staging)")
             elif "db.r6g.large" in full_text:
@@ -1328,11 +1348,11 @@ class HybridLLMClient:
             cloud={
                 "provider": "aws",
                 "region": "us-east-1",
-                "environment": "local",
+                "environment": target_env,
                 "resources": cloud_resources,
             } if cloud_resources else None,
             dependencies=[],
-            assumptions=["Generated adhering to Scope Fidelity rules"],
+            assumptions=[fallback_notice, "Generated adhering to Scope Fidelity rules"],
             estimated_cost_monthly=15.0 if intents["wants_database"] else 5.0,
             risk_level="medium",
         )

@@ -554,9 +554,11 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
           <div className="space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-ink-secondary bg-elevated/40 p-3 rounded-lg border border-line">
               <div className="flex items-center gap-3 flex-wrap">
-                <span>Environment: <strong className="text-ink-primary uppercase">{ir.cloud?.environment || 'local'}</strong> (LocalStack Sandbox)</span>
-                <span>•</span>
-                <span>Region: <strong className="font-mono text-ink-primary">{ir.cloud?.region || 'us-east-1'}</strong></span>
+                <span>Target: <strong className="text-ink-primary">{plan?.target_label || (
+                  (ir.cloud?.environment === 'prod' || ir.cloud?.environment === 'staging')
+                    ? `AWS Cloud (${(ir.cloud?.environment || 'prod').toUpperCase()}) • Account: ${plan?.account_id || 'unknown'} • Region: ${ir.cloud?.region || 'us-east-1'}`
+                    : `LocalStack • Account: ${plan?.account_id || '000000000000'} • Region: ${ir.cloud?.region || 'us-east-1'}`
+                )}</strong></span>
                 {snapshotHash && (
                   <>
                     <span>•</span>
@@ -1106,7 +1108,10 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
         <form onSubmit={handleConfirmSubmit} className="space-y-4">
           <p className="text-xs text-ink-secondary leading-relaxed">
             This plan carries a <strong className="text-crit uppercase">{plan.risk_level}</strong> risk rating.
-            To confirm execution against LocalStack, type{' '}
+            To confirm execution against{' '}
+            <strong className="text-ink-primary">
+              {plan.target_label || (plan.environment === 'prod' ? 'AWS Production' : (plan.environment === 'staging' ? 'AWS Staging' : 'LocalStack'))}
+            </strong>, type{' '}
             <strong className="font-mono text-ink-primary bg-base px-2 py-0.5 rounded border border-line select-all">
               {plan.confirmation_phrase}
             </strong>{' '}

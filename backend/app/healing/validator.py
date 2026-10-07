@@ -119,7 +119,8 @@ class FixValidator:
 
             # Generate or update main.tf in sandbox
             if proposal.fix_type in ["ir_patch", "reorder", "cidr_recompute", "instance_fallback", "regenerate_hcl"]:
-                tf_generator.generate(patched_ir, environment="local", plan_id=sandbox_dir.name)
+                real_env = (patched_ir.cloud.environment if patched_ir.cloud and patched_ir.cloud.environment else (current_ir.cloud.environment if current_ir.cloud and current_ir.cloud.environment else "local"))
+                tf_generator.generate(patched_ir, environment=real_env, plan_id=sandbox_dir.name)
             elif proposal.fix_type == "hcl_patch" and "hcl" in proposal.patch:
                 (sandbox_dir / "main.tf").write_text(proposal.patch["hcl"], encoding="utf-8")
 

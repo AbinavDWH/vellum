@@ -71,7 +71,8 @@ class DeterministicPlaybooks:
                     break
 
         patched_ir = UniversalIR(**ir_dict)
-        tf_generator.generate(patched_ir, environment="local", plan_id=Path(plan_dir).name)
+        real_env = (patched_ir.cloud.environment if patched_ir.cloud and patched_ir.cloud.environment else "local")
+        tf_generator.generate(patched_ir, environment=real_env, plan_id=Path(plan_dir).name)
         new_hcl = (p_dir / "main.tf").read_text(encoding="utf-8") if (p_dir / "main.tf").exists() else ""
 
         diff = {
@@ -164,7 +165,8 @@ class DeterministicPlaybooks:
                 changed_res = res.get("name")
 
         patched_ir = UniversalIR(**ir_dict)
-        tf_generator.generate(patched_ir, environment="local", plan_id=Path(plan_dir).name)
+        real_env = (patched_ir.cloud.environment if patched_ir.cloud and patched_ir.cloud.environment else "local")
+        tf_generator.generate(patched_ir, environment=real_env, plan_id=Path(plan_dir).name)
         new_hcl = (p_dir / "main.tf").read_text(encoding="utf-8") if (p_dir / "main.tf").exists() else ""
 
         diff = {
@@ -216,7 +218,8 @@ class DeterministicPlaybooks:
                         deps.append(vpc_name)
 
         patched_ir = UniversalIR(**ir_dict)
-        tf_generator.generate(patched_ir, environment="local", plan_id=Path(plan_dir).name)
+        real_env = (patched_ir.cloud.environment if patched_ir.cloud and patched_ir.cloud.environment else "local")
+        tf_generator.generate(patched_ir, environment=real_env, plan_id=Path(plan_dir).name)
         new_hcl = (p_dir / "main.tf").read_text(encoding="utf-8") if (p_dir / "main.tf").exists() else ""
 
         diff = {
@@ -237,7 +240,8 @@ class DeterministicPlaybooks:
         Regenerate clean HCL from the Universal IR.
         """
         p_dir = Path(plan_dir)
-        tf_generator.generate(current_ir, environment="local", plan_id=p_dir.name)
+        real_env = (current_ir.cloud.environment if current_ir.cloud and current_ir.cloud.environment else "local")
+        tf_generator.generate(current_ir, environment=real_env, plan_id=p_dir.name)
         new_hcl = (p_dir / "main.tf").read_text(encoding="utf-8") if (p_dir / "main.tf").exists() else ""
 
         diff = {
@@ -314,7 +318,8 @@ class DeterministicPlaybooks:
                     res["properties"]["instance_type"] = new_inst
 
         patched_ir = UniversalIR(**ir_dict)
-        tf_generator.generate(patched_ir, environment="local", plan_id=Path(plan_dir).name)
+        real_env = (patched_ir.cloud.environment if patched_ir.cloud and patched_ir.cloud.environment else "local")
+        tf_generator.generate(patched_ir, environment=real_env, plan_id=Path(plan_dir).name)
         new_hcl = (p_dir / "main.tf").read_text(encoding="utf-8") if (p_dir / "main.tf").exists() else ""
 
         diff = {

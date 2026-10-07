@@ -52,34 +52,54 @@ class VerificationEngine:
         found_names: List[str] = []
         missing_names: List[str] = []
 
-        is_local = (environment == "local")
-        target_region = region or (cloud.get("region") if cloud else None) or settings.LOCALSTACK_REGION or "us-east-1"
+        from app.target import resolve_target
+
+        target = resolve_target(
+            ir=expected_ir,
+            environment=environment,
+            region=region,
+            db=db,
+            strict_prod=False,
+            allow_missing=True,
+        )
+        if target.environment:
+            environment = target.environment
+            target_region = target.region
+            is_local = target.is_local
+            audited_account = target.account_id or ("000000000000" if is_local else None)
+            audited_label = target.target_label
+            resolved_key = target.aws_access_key or aws_access_key
+            resolved_secret = target.aws_secret_key or aws_secret_key
+        else:
+            is_local = (environment == "local")
+            target_region = region or (cloud.get("region") if cloud else None) or settings.LOCALSTACK_REGION or "us-east-1"
+            audited_account = account_id or ("000000000000" if is_local else None)
+            audited_label = f"LocalStack • Account: 000000000000 • Region: {target_region}" if is_local else f"AWS Cloud ({environment.upper()}) • Account: {audited_account or 'unknown'} • Region: {target_region}"
+            resolved_key = aws_access_key
+            resolved_secret = aws_secret_key
 
         if is_local:
             localstack_online = self.is_localstack_online()
-            audited_account = "000000000000"
-            audited_label = f"LocalStack (Simulation) • Region: {target_region}"
 
             if not localstack_online:
-                # Emulated verification when LocalStack is offline
-                found_names = list(expected_names)
+                logger.warning("LocalStack container offline on port 4566 during verification", plan_id=plan_id)
                 return {
                     "plan_id": plan_id,
-                    "status": "success",
+                    "status": "failed",
                     "drift_detected": False,
-                    "resources_verified": max(len(expected_names), 1),
+                    "resources_verified": 0,
                     "expected_resources": expected_names,
-                    "found_resources": found_names,
-                    "missing_resources": [],
+                    "found_resources": [],
+                    "missing_resources": expected_names,
                     "target_environment": environment,
                     "audited_account_id": audited_account,
                     "audited_region": target_region,
                     "audited_target_label": audited_label,
                     "audited_at": now_iso,
-                    "error_message": None,
+                    "error_message": "LocalStack is offline on port 4566. Verification cannot connect to live environment.",
                     "details": {
-                        "mode": "simulation",
-                        "note": "LocalStack offline; verified via configuration consistency check."
+                        "mode": "offline",
+                        "note": "LocalStack is offline. Please start LocalStack container before verifying."
                     }
                 }
 

@@ -25,6 +25,7 @@ from app.schemas.ir import UniversalIR, ClarificationQuestion, ClarificationResp
 from app.environment.inventory import environment_inventory
 from app.validation.environment_conflict import environment_conflict_validator
 from app.requirements import requirements_manager
+from app.target import resolve_target, ProductionConnectionRequiredError
 
 logger = structlog.get_logger(__name__)
 
@@ -84,19 +85,32 @@ class VellumOrchestrator:
         """
         logger.info("Processing NL infrastructure request", prompt=prompt, session_id=session_id)
 
-        # Check if environment is explicitly mentioned in prompt or active connection
-        prompt_lower = prompt.lower()
-        if "prod" in prompt_lower or "production" in prompt_lower:
-            if environment == "local" and not ("localstack" in prompt_lower or "locally" in prompt_lower or "local" in prompt_lower):
-                environment = "prod"
-        elif environment == "local" and not ("localstack" in prompt_lower or "locally" in prompt_lower or "local" in prompt_lower):
-            try:
-                from app.credentials.manager import credential_manager
-                active_prod = credential_manager.get_active_connection(environment="prod", db=db)
-                if active_prod and not credential_manager.get_active_connection(environment="local", db=db):
-                    environment = "prod"
-            except Exception:
-                pass
+        # Resolve target strictly using UI/request choice or connection
+        target_res = resolve_target(
+            environment=environment,
+            cloud_provider=cloud_provider,
+            db=db,
+            allow_missing=True,
+        )
+        if target_res.error and not target_res.environment:
+            return ChatResponse(
+                status="clarification_needed",
+                message="Target environment is missing. Please select a target environment (e.g. LocalStack or an AWS connection) before proceeding.",
+                clarification=ClarificationResponse(
+                    is_ready=False,
+                    questions=[
+                        ClarificationQuestion(
+                            question="Which target environment should be used?",
+                            context="Target environment must be explicitly selected.",
+                            default_suggestion="LocalStack",
+                            options=["LocalStack (Simulation)", "AWS Production", "AWS Staging"],
+                        )
+                    ]
+                )
+            )
+
+        environment = target_res.environment
+        cloud_provider = target_res.provider
 
         # Load current session requirements.md
         current_req_md = requirements_manager.get_requirements(
@@ -105,13 +119,6 @@ class VellumOrchestrator:
             environment=environment,
             db=db,
         )
-
-        if current_req_md and environment == "local":
-            import re
-            env_match = re.search(r'\*\*Environment\*\*:\s*([a-zA-Z0-9_-]+)', current_req_md, re.IGNORECASE)
-            if env_match and env_match.group(1).lower() in ["prod", "production", "staging"]:
-                if not ("localstack" in prompt_lower or "locally" in prompt_lower or "local" in prompt_lower):
-                    environment = "prod" if env_match.group(1).lower() in ["prod", "production"] else env_match.group(1).lower()
 
         if current_req_md and environment in ["prod", "staging"]:
             import re
@@ -234,9 +241,9 @@ class VellumOrchestrator:
             ir.cloud.provider = cloud_provider
             ir.cloud.environment = environment
 
-        # Scope Fidelity Check (F4: SCOPE_FIDELITY)
+        # Scope Fidelity Check (F4: SCOPE_FIDELITY - whole session validation)
         from app.validation.scope_fidelity import ScopeFidelityValidator
-        is_scope_valid, scope_errors, annotated_ir = ScopeFidelityValidator.validate(prompt, ir)
+        is_scope_valid, scope_errors, annotated_ir = ScopeFidelityValidator.validate(prompt, ir, requirements_md=current_req_md)
         if not is_scope_valid:
             logger.warning("SCOPE_FIDELITY violation in generated plan, attempting planner re-generation", errors=scope_errors)
             corrective_prompt = (
@@ -250,11 +257,11 @@ class VellumOrchestrator:
             try:
                 re_ir = llm_client.generate_ir(
                     corrective_prompt,
-                    requirements_md="",
+                    requirements_md=current_req_md,
                     model=model,
                     provider=provider,
                 )
-                re_valid, re_errors, re_annotated = ScopeFidelityValidator.validate(prompt, re_ir)
+                re_valid, re_errors, re_annotated = ScopeFidelityValidator.validate(prompt, re_ir, requirements_md=current_req_md)
                 if re_valid:
                     ir = re_annotated
                     is_scope_valid = True
@@ -262,8 +269,9 @@ class VellumOrchestrator:
                 logger.warning("Re-prompting planner on SCOPE_FIDELITY failed", error=str(re_ex))
 
         if not is_scope_valid:
-            # Deterministic pruning fallback to guarantee scope fidelity
-            intents = ScopeFidelityValidator.analyze_user_intent(prompt)
+            # Deterministic pruning fallback to guarantee scope fidelity against session
+            session_context = f"{prompt}\n\n{current_req_md or ''}"
+            intents = ScopeFidelityValidator.analyze_user_intent(session_context)
             if not intents["wants_database"]:
                 ir.database = None
                 if ir.cloud and ir.cloud.resources:
@@ -275,8 +283,8 @@ class VellumOrchestrator:
                 if ir.cloud and ir.cloud.resources:
                     ir.cloud.resources = [r for r in ir.cloud.resources if r.type not in ["object_storage", "s3_bucket", "storage_bucket", "static_site", "website_hosting"]]
 
-            # Re-validate
-            _, _, annotated_ir = ScopeFidelityValidator.validate(prompt, ir)
+            # Re-validate against session requirements
+            _, _, annotated_ir = ScopeFidelityValidator.validate(prompt, ir, requirements_md=current_req_md)
             ir = annotated_ir
         else:
             ir = annotated_ir
@@ -327,7 +335,11 @@ class VellumOrchestrator:
 
         # 3. Service Scope Check (M-17: SERVICE_IN_SCOPE)
         from app.credentials.manager import credential_manager
-        active_conn = credential_manager.get_active_connection(environment=environment, db=db)
+        active_conn = None
+        if target_res.connection_id:
+            active_conn = credential_manager.get_connection_record(target_res.connection_id, db=db)
+        if not active_conn:
+            active_conn = credential_manager.get_active_connection(environment=environment, db=db)
         if active_conn:
             is_in_scope, scope_errors = credential_manager.validate_service_scope(ir, active_conn)
             if not is_in_scope:
@@ -347,10 +359,10 @@ class VellumOrchestrator:
         # 6. Risk & Policy Evaluation
         risk = approval_engine.classify_risk(ir)
         requires_conf, conf_phrase = approval_engine.get_confirmation_requirements(ir)
-        if active_conn and active_conn.environment == "prod":
+        if (active_conn and active_conn.environment == "prod") or target_res.environment == "prod":
             risk = RiskLevel.CRITICAL
             requires_conf = True
-            conf_phrase = active_conn.name
+            conf_phrase = active_conn.name if active_conn else "prod"
         ir.risk_level = risk.value
 
         # Heuristic cost calculation
@@ -363,7 +375,7 @@ class VellumOrchestrator:
 
         # 6. Generate Code
         plan_id = f"plan_{uuid.uuid4().hex[:8]}"
-        plan_dir = tf_generator.generate(ir, environment=environment, plan_id=plan_id)
+        plan_dir = tf_generator.generate(ir, environment=target_res.environment, plan_id=plan_id)
         
         main_tf_path = f"{plan_dir}/main.tf"
         generated_tf = ""
@@ -391,7 +403,7 @@ class VellumOrchestrator:
         try:
             plan_record = PlanRecord(
                 plan_id=plan_id,
-                connection_id=active_conn.id if active_conn else None,
+                connection_id=target_res.connection_id or (active_conn.id if active_conn else None),
                 prompt=prompt,
                 intent=ir.intent,
                 risk_level=risk.value,
@@ -449,6 +461,9 @@ class VellumOrchestrator:
             if close_db:
                 db.close()
 
+        is_fallback = getattr(ir, "_is_fallback", False) or any("FALLBACK" in a for a in ir.assumptions)
+        fallback_warning = "⚠️ **Notice: AI model generation failed. A keyword-based template fallback plan was used instead.**\n\n" if is_fallback else ""
+
         plan_res = PlanResponse(
             plan_id=plan_id,
             status="awaiting_approval",
@@ -463,6 +478,11 @@ class VellumOrchestrator:
             estimated_cost_monthly=cost,
             security_checks=security_findings,
             implementation_plan=ir.implementation_plan or [],
+            connection_id=target_res.connection_id,
+            environment=target_res.environment,
+            target_label=target_res.target_label,
+            account_id=target_res.account_id,
+            region=target_res.region,
             created_at=datetime.datetime.utcnow().isoformat(),
         )
 
@@ -480,7 +500,7 @@ class VellumOrchestrator:
         grounded_suffix = f" (grounded with {len(citations_summary)} official specifications)" if citations_summary else ""
         return ChatResponse(
             status="plan_ready",
-            message=f"I have designed the infrastructure plan based on your requirement{grounded_suffix}. Risk level: {risk.value.upper()}. Human approval is required to execute.",
+            message=f"{fallback_warning}I have designed the infrastructure plan based on your requirement{grounded_suffix}. Risk level: {risk.value.upper()}. Human approval is required to execute.",
             plan=plan_res,
             rag_citations=citations_summary,
             requirements_md=current_req_md,
@@ -502,11 +522,15 @@ class VellumOrchestrator:
             environment=environment,
             db=db,
         )
-        if req_md and environment == "local":
-            import re
-            env_match = re.search(r'\*\*Environment\*\*:\s*([a-zA-Z0-9_-]+)', req_md, re.IGNORECASE)
-            if env_match and env_match.group(1).lower() in ["prod", "production", "staging"]:
-                environment = "prod" if env_match.group(1).lower() in ["prod", "production"] else env_match.group(1).lower()
+        target_res = resolve_target(
+            environment=environment,
+            cloud_provider=cloud_provider,
+            db=db,
+            allow_missing=True,
+        )
+        if target_res.environment:
+            environment = target_res.environment
+            cloud_provider = target_res.provider
 
         if req_md and environment in ["prod", "staging"]:
             import re

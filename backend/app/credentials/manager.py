@@ -197,47 +197,14 @@ class CredentialManager:
     # ========================================================
 
     def seed_default_connection(self, db: Session) -> Optional[ConnectionRecord]:
-        try:
-            existing = db.query(ConnectionRecord).filter(ConnectionRecord.is_deleted == False).first()
-            if existing:
-                return existing
-
-            test_key = "AKIAIOSFODNN7EXAMPLE"
-            test_secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-            conn = ConnectionRecord(
-                id="conn_sandbox_main",
-                name="sandbox-main",
-                provider="aws",
-                environment="local",
-                auth_method="access_key",
-                region="us-east-1",
-                key_prefix=test_key[:4],
-                key_last4=test_key[-4:],
-                encrypted_access_key=self.encrypt(test_key),
-                encrypted_secret_key=self.encrypt(test_secret),
-                fingerprint=hashlib.sha256(test_key.encode("utf-8")).hexdigest(),
-                services_json=json.dumps(["s3", "ec2", "vpc", "rds", "iam", "sts", "cloudwatch", "sqs", "sns", "dynamodb", "elasticache", "secretsmanager"]),
-                status="connected",
-                restart_pending=False,
-                account_id="000000000000",
-                arn="arn:aws:iam::000000000000:root",
-                last_tested_at=datetime.datetime.utcnow(),
-            )
-            db.add(conn)
-            db.commit()
-            db.refresh(conn)
-            return conn
-        except Exception as e:
-            logger.warning("failed_to_seed_default_connection", error=str(e))
-            db.rollback()
-            return None
+        # Fake sandbox connection removed so auto-switch and prod isolation logic works properly
+        return None
 
     # ========================================================
     # Connection CRUD (M-17)
     # ========================================================
 
     def list_connections(self, db: Session) -> List[Dict[str, Any]]:
-        self.seed_default_connection(db)
         records = db.query(ConnectionRecord).filter(ConnectionRecord.is_deleted == False).order_by(ConnectionRecord.created_at.desc()).all()
         return [self.to_dict(r) for r in records]
 
@@ -263,7 +230,6 @@ class CredentialManager:
             close = False
 
         try:
-            self.seed_default_connection(db)
             if hasattr(db, "expire_all"):
                 db.expire_all()
             conn = db.query(ConnectionRecord).filter(
@@ -274,10 +240,6 @@ class CredentialManager:
             if not conn:
                 conn = db.query(ConnectionRecord).filter(
                     ConnectionRecord.environment == environment,
-                    ConnectionRecord.is_deleted == False
-                ).order_by(ConnectionRecord.updated_at.desc(), ConnectionRecord.created_at.desc()).first()
-            if not conn and environment == "local":
-                conn = db.query(ConnectionRecord).filter(
                     ConnectionRecord.is_deleted == False
                 ).order_by(ConnectionRecord.updated_at.desc(), ConnectionRecord.created_at.desc()).first()
             return conn

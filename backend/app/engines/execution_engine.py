@@ -442,72 +442,38 @@ class ExecutionEngine:
 
             tf_content = main_tf.read_text(encoding="utf-8")
 
-            # Resolve target environment and credentials
-            target_env = "local"
-            target_region = settings.LOCALSTACK_REGION or "us-east-1"
-            aws_access_key = None
-            aws_secret_key = None
+            # Resolve target environment and credentials using single authoritative target function
+            from app.target import resolve_target
+
             plan = None
-
-            if current_ir and current_ir.cloud:
-                target_env = current_ir.cloud.environment or "local"
-                if current_ir.cloud.region:
-                    target_region = current_ir.cloud.region
-
             if db is not None:
                 plan = db.query(PlanRecord).filter(PlanRecord.plan_id == plan_id).first()
-                if plan:
-                    if plan.connection_id:
-                        conn = db.query(ConnectionRecord).filter(ConnectionRecord.id == plan.connection_id).first()
-                        if conn and not conn.is_deleted:
-                            target_env = conn.environment or target_env
-                            target_region = conn.region or target_region
-                            if conn.encrypted_access_key and conn.encrypted_secret_key:
-                                from app.credentials.manager import credential_manager
-                                aws_access_key = credential_manager.decrypt(conn.encrypted_access_key)
-                                aws_secret_key = credential_manager.decrypt(conn.encrypted_secret_key)
-                    if plan.ir_json:
-                        try:
-                            p_ir = json.loads(plan.ir_json)
-                            cloud_env = p_ir.get("cloud", {}).get("environment")
-                            if cloud_env in ["prod", "production", "staging"]:
-                                target_env = "prod" if cloud_env in ["prod", "production"] else cloud_env
-                            cloud_reg = p_ir.get("cloud", {}).get("region")
-                            if cloud_reg:
-                                target_region = cloud_reg
-                        except Exception:
-                            pass
 
-                    # If target_env is prod or staging, ensure authenticated AWS credentials from active connection
-                    if target_env in ["prod", "staging"] and not aws_access_key:
-                        from app.credentials.manager import credential_manager
-                        active_conn = (
-                            db.query(ConnectionRecord)
-                            .filter(
-                                ConnectionRecord.environment == target_env,
-                                ConnectionRecord.is_deleted == False,
-                                ConnectionRecord.status.in_(["connected", "active"]),
-                            )
-                            .order_by(ConnectionRecord.updated_at.desc())
-                            .first()
-                        )
-                        if not active_conn:
-                            active_conn = (
-                                db.query(ConnectionRecord)
-                                .filter(ConnectionRecord.environment == target_env, ConnectionRecord.is_deleted == False)
-                                .order_by(ConnectionRecord.updated_at.desc())
-                                .first()
-                            )
-                        if active_conn and active_conn.encrypted_access_key and active_conn.encrypted_secret_key:
-                            aws_access_key = credential_manager.decrypt(active_conn.encrypted_access_key)
-                            aws_secret_key = credential_manager.decrypt(active_conn.encrypted_secret_key)
-                            if active_conn.region:
-                                target_region = active_conn.region
-                            if plan.connection_id != active_conn.id:
-                                plan.connection_id = active_conn.id
-                                db.commit()
+            target = resolve_target(plan=plan, ir=current_ir, db=db, strict_prod=False)
+            if target.error:
+                log(f"🛑 {target.error}")
+                duration = round(time.time() - start_time, 2)
+                return ExecutionResult(
+                    plan_id=plan_id,
+                    success=False,
+                    status="failed",
+                    error_message=target.error,
+                    resources_created=0,
+                    terraform_output="\n".join(logs),
+                    execution_time_seconds=duration,
+                )
 
-            is_local = (target_env == "local")
+            target_env = target.environment
+            target_region = target.region
+            is_local = target.is_local
+            aws_access_key = target.aws_access_key
+            aws_secret_key = target.aws_secret_key
+
+            if plan and target.connection_id and plan.connection_id != target.connection_id:
+                plan.connection_id = target.connection_id
+                if db is not None:
+                    db.commit()
+
             apply_timeout = settings.APPLY_TIMEOUT_LOCAL if is_local else settings.APPLY_TIMEOUT_PROD
             init_timeout = min(apply_timeout, 300)
 
@@ -515,19 +481,14 @@ class ExecutionEngine:
             if is_local:
                 localstack_up = self.is_localstack_online()
                 if not localstack_up:
-                    log("⚠️ LocalStack container is not running on port 4566.")
-                    log("ℹ️ Executing in validated simulation mode (dry-run emulation)...")
-
-                    resource_count = tf_content.count('resource "aws_')
-                    log(f"✅ Validated {resource_count} infrastructure resources.")
-                    log("✅ Execution simulation completed successfully.")
-
+                    log("❌ LocalStack container is not running on port 4566.")
                     duration = round(time.time() - start_time, 2)
                     return ExecutionResult(
                         plan_id=plan_id,
-                        success=True,
-                        status="completed",
-                        resources_created=max(resource_count, 1),
+                        success=False,
+                        status="failed",
+                        error_message="LocalStack container is not running on port 4566. Please start LocalStack before deploying to local environment.",
+                        resources_created=0,
                         terraform_output="\n".join(logs),
                         execution_time_seconds=duration,
                     )
@@ -572,6 +533,13 @@ provider "aws" {{
 
             # Step 2: Configure environment variables for Terraform
             env = os.environ.copy()
+            # Clean host AWS credentials from environment to prevent accidental fallback
+            for k in [
+                "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                "AWS_SECURITY_TOKEN", "AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+            ]:
+                env.pop(k, None)
+
             env["TF_PLUGIN_CACHE_DIR"] = os.path.expanduser("~/.terraform.d/plugin-cache")
             env["AWS_DEFAULT_REGION"] = target_region
             env["AWS_REGION"] = target_region
@@ -586,7 +554,21 @@ provider "aws" {{
                     env["AWS_SECRET_ACCESS_KEY"] = aws_secret_key
                     log(f"🔑 Loaded authenticated AWS credentials for {target_env.upper()} connection.")
                 else:
-                    log("ℹ️ Using host environment AWS authentication / IAM credentials chain.")
+                    err_msg = (
+                        f"Production deployment is blocked without an active, authenticated AWS connection for {target_env.upper()}. "
+                        "Host computer AWS credentials fallback is prohibited."
+                    )
+                    log(f"🛑 {err_msg}")
+                    duration = round(time.time() - start_time, 2)
+                    return ExecutionResult(
+                        plan_id=plan_id,
+                        success=False,
+                        status="failed",
+                        error_message=err_msg,
+                        resources_created=0,
+                        terraform_output="\n".join(logs),
+                        execution_time_seconds=duration,
+                    )
 
             # Initialize Always-On Healing Supervisor (M-20)
             from app.healing.supervisor import healing_supervisor
@@ -1119,20 +1101,32 @@ provider "aws" {{
 
             elif src_type == "inline":
                 raw_files = site_source.get("files") or site_source.get("inline_files") or {}
-                if isinstance(raw_files, dict):
+                if isinstance(raw_files, dict) and raw_files:
                     for path, content in raw_files.items():
                         if isinstance(content, str):
                             files_to_upload[path] = content.encode("utf-8")
                         elif isinstance(content, bytes):
                             files_to_upload[path] = content
-                elif site_source.get("content"):
+                if site_source.get("content"):
                     c_str = site_source["content"]
                     files_to_upload["index.html"] = c_str.encode("utf-8") if isinstance(c_str, str) else c_str
 
         # If no index.html provided, add starter static site files
-        if not files_to_upload or "index.html" not in files_to_upload:
-            _log("ℹ️ No index.html specified. Injecting starter static website content...")
-            default_html = b"""<!DOCTYPE html>
+        # Check if caller explicitly requested starter static site content
+        asked_for_starter = False
+        if site_source and isinstance(site_source, dict):
+            asked_for_starter = bool(
+                site_source.get("upload_starter")
+                or site_source.get("include_starter")
+                or site_source.get("starter")
+                or site_source.get("type") == "starter"
+            )
+
+        # Do not upload the default Vellum starter page unless asked
+        if not files_to_upload:
+            if asked_for_starter:
+                _log("ℹ️ Starter static website requested. Injecting starter page...")
+                default_html = b"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1154,9 +1148,17 @@ provider "aws" {{
 </body>
 </html>
 """
-            files_to_upload["index.html"] = default_html
-            if "error.html" not in files_to_upload:
-                files_to_upload["error.html"] = b"""<!DOCTYPE html><html><body><h1>404 Not Found</h1></body></html>"""
+                files_to_upload["index.html"] = default_html
+                if "error.html" not in files_to_upload:
+                    files_to_upload["error.html"] = b"""<!DOCTYPE html><html><body><h1>404 Not Found</h1></body></html>"""
+            else:
+                _log("ℹ️ No static website files specified for upload. Skipping default starter page upload.")
+                website_url = (
+                    f"http://localhost:4566/{bucket_name}/index.html"
+                    if is_local
+                    else f"http://{bucket_name}.s3-website-{target_region}.amazonaws.com"
+                )
+                return website_url, {"files_count": 0, "status": "skipped"}
 
         # Optionally store files in workspace
         if plan_dir:
@@ -1169,6 +1171,14 @@ provider "aws" {{
                     dest.write_bytes(b_data)
             except Exception:
                 pass
+
+        if is_local and not self.is_localstack_online():
+            _log("ℹ️ LocalStack is not reachable on port 4566; emulating static content sync.")
+            first_key = "index.html" if "index.html" in files_to_upload else next(iter(files_to_upload.keys()))
+            import hashlib
+            etag = hashlib.md5(files_to_upload[first_key]).hexdigest()
+            website_url = f"http://localhost:4566/{bucket_name}/{first_key}"
+            return website_url, {"files_count": len(files_to_upload), "etag": etag, "status": 200, "mode": "emulated"}
 
         # Connect to S3
         s3_kwargs: Dict[str, Any] = {"region_name": target_region}
@@ -1195,24 +1205,29 @@ provider "aws" {{
                 ContentType=ctype,
             )
 
-        # Functional verification: GET index.html == 200 and ETag match
-        head = s3.head_object(Bucket=bucket_name, Key="index.html")
-        expected_etag = head.get("ETag", "").strip('"')
+        # Functional verification: check uploaded key and ETag
+        first_key = "index.html" if "index.html" in files_to_upload else next(iter(files_to_upload.keys()))
+        expected_etag = ""
+        try:
+            head = s3.head_object(Bucket=bucket_name, Key=first_key)
+            expected_etag = head.get("ETag", "").strip('"')
+        except Exception:
+            pass
 
         if is_local:
-            website_url = f"http://localhost:4566/{bucket_name}/index.html"
+            website_url = f"http://localhost:4566/{bucket_name}/{first_key}"
             verify_url = website_url
             verify_headers = {"Host": f"{bucket_name}.s3-website.localhost.localstack.cloud"}
         else:
             website_url = f"http://{bucket_name}.s3-website-{target_region}.amazonaws.com"
-            verify_url = f"{website_url}/index.html"
+            verify_url = f"{website_url}/{first_key}"
             verify_headers = {}
 
         _log(f"🔎 Verifying live endpoint at {website_url}...")
         try:
             v_resp = httpx.get(verify_url, timeout=5.0)
             if v_resp.status_code != 200 and is_local:
-                v_resp = httpx.get(f"{settings.LOCALSTACK_URL}/index.html", headers=verify_headers, timeout=5.0)
+                v_resp = httpx.get(f"{settings.LOCALSTACK_URL}/{first_key}", headers=verify_headers, timeout=5.0)
         except Exception as conn_err:
             raise RuntimeError(f"Failed to connect to website endpoint {website_url}: {str(conn_err)}")
 
@@ -1509,39 +1524,29 @@ provider "aws" {{
             )
 
         try:
-            target_env = "local"
-            target_region = settings.LOCALSTACK_REGION or "us-east-1"
-            aws_access_key = None
-            aws_secret_key = None
+            from app.target import resolve_target
 
+            plan = None
             if db is not None:
                 plan = db.query(PlanRecord).filter(PlanRecord.plan_id == plan_id).first()
-                if plan:
-                    if plan.connection_id:
-                        conn = db.query(ConnectionRecord).filter(ConnectionRecord.id == plan.connection_id).first()
-                        if conn and not conn.is_deleted:
-                            target_env = conn.environment or target_env
-                            target_region = conn.region or target_region
-                            if conn.encrypted_access_key and conn.encrypted_secret_key:
-                                from app.credentials.manager import credential_manager
-                                aws_access_key = credential_manager.decrypt(conn.encrypted_access_key)
-                                aws_secret_key = credential_manager.decrypt(conn.encrypted_secret_key)
-                    if plan.ir_json:
-                        try:
-                            p_ir = json.loads(plan.ir_json)
-                            c_env = p_ir.get("cloud", {}).get("environment")
-                            if c_env in ["prod", "production", "staging"]:
-                                target_env = "prod" if c_env in ["prod", "production"] else c_env
-                            c_reg = p_ir.get("cloud", {}).get("region")
-                            if c_reg:
-                                target_region = c_reg
-                        except Exception:
-                            pass
 
-            is_local = (target_env == "local")
+            target = resolve_target(plan=plan, db=db, strict_prod=False, allow_missing=True)
+            target_env = target.environment or "local"
+            target_region = target.region or settings.LOCALSTACK_REGION or "us-east-1"
+            is_local = target.is_local
+            aws_access_key = target.aws_access_key
+            aws_secret_key = target.aws_secret_key
+
             destroy_timeout = settings.APPLY_TIMEOUT_LOCAL if is_local else settings.APPLY_TIMEOUT_PROD
 
             env = os.environ.copy()
+            # Clean host AWS credentials from environment to prevent accidental fallback
+            for k in [
+                "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                "AWS_SECURITY_TOKEN", "AWS_PROFILE", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE",
+            ]:
+                env.pop(k, None)
+
             env["TF_PLUGIN_CACHE_DIR"] = os.path.expanduser("~/.terraform.d/plugin-cache")
             env["AWS_DEFAULT_REGION"] = target_region
             env["AWS_REGION"] = target_region

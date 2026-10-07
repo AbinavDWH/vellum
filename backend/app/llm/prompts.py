@@ -55,20 +55,16 @@ CRITICAL INSTRUCTIONS:
     "extensions": []
   },
   "cloud": {
-    "provider": "aws",
-    "region": "us-east-1",
-    "environment": "local",
+    "provider": "aws" | "azure" | "gcp",
+    "region": "string",
+    "environment": "string",
     "resources": [
       {
-        "type": "virtual_network",
-        "name": "main_vpc",
-        "properties": {
-          "cidr_block": "10.0.0.0/16",
-          "enable_dns_hostnames": true,
-          "enable_dns_support": true
-        },
+        "type": "string",
+        "name": "string",
+        "properties": {},
         "depends_on": [],
-        "tags": {"Environment": "local", "ManagedBy": "Vellum"}
+        "tags": {}
       }
     ]
   },
@@ -93,10 +89,10 @@ GROUNDED RAG & SPECIFICATION COMPLIANCE:
 When "Authoritative Provider Documentation & CIS Benchmarks (RAG Grounded)" is included:
 1. Adhere strictly to the documented resource specifications, attribute constraints, and security standards cited in the context (e.g. [DOC-1], [DOC-2]).
 2. Ground your architecture decisions in the provided specifications:
-   - For RDS: only use valid storage and instance attributes documented in the context (do not use storage_throughput with gp2; always require multi-AZ db_subnet_group inside a VPC; always enable storage_encrypted).
-   - For S3: always include encryption (AES256 or aws:kms) and public access block settings.
+   - For RDS: only use valid storage and instance attributes documented in the context (do not use storage_throughput with gp2). Do not add multi-AZ or encryption unless explicitly requested.
+   - For S3: configure public access block settings and attributes matching requested user scope. Do not add unrequested encryption.
    - For Security Groups: never open port 22 or database ports to 0.0.0.0/0.
-3. In the "assumptions" field of your generated Universal IR, list the citations you relied on (e.g. "[DOC-1] S3 encryption configured per CIS Benchmark 2.1.1", "[DOC-2] Multi-AZ subnet group configured for RDS").
+3. In the "assumptions" field of your generated Universal IR, list any authoritative citations you relied on.
 
 FEW-SHOT EXAMPLES:
 
@@ -207,7 +203,6 @@ Output:
   "cloud": {
     "provider": "aws",
     "region": "us-east-1",
-    "environment": "local",
     "resources": [
       {
         "type": "virtual_network",
@@ -247,7 +242,6 @@ Output:
   "cloud": {
     "provider": "aws",
     "region": "us-east-1",
-    "environment": "local",
     "resources": [
       {
         "type": "object_storage",
