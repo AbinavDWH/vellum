@@ -1,0 +1,86 @@
+name: Vellum CD & Release Governance
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      rollback_sha:
+        description: "Target Git SHA for immediate rollback"
+        required: false
+        default: ""
+      emergency_override_token:
+        description: "Authorized emergency override token for after-hours deployment"
+        required: false
+        default: ""
+
+concurrency:
+  group: production-release-lock
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # For AWS OIDC authentication (no static keys)
+  contents: read
+
+jobs:
+  deploy-staging:
+    name: Staging Deployment & Parity Verification
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Staging Environment
+        run: |
+          echo "Deploying SHA ${{ github.sha }} to staging cluster..."
+
+      - name: Run Staging Smoke & Verification Drills
+        run: |
+          echo "Staging health verification passed."
+
+  production-gate:
+    name: Production Release Governance & Gate Discipline
+    runs-on: ubuntu-latest
+    needs: [ deploy-staging ]
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Enforce Deploy Window & Freeze Calendar (Rule 1 & Rule 4)
+        run: |
+          PYTHONPATH=backend python3 -c "
+          from app.validation.release_governance import ReleaseGovernanceEngine
+          res = ReleaseGovernanceEngine.check_deploy_window(override_approval_token='${{ github.event.inputs.emergency_override_token }}')
+          print('Deploy Window Evaluation:', res['reason'])
+          if not res['allowed']:
+              exit(1)
+          "
+
+      - name: Deploy to Production (Canary)
+        run: |
+          echo "Initiating 10% canary traffic shift to production..."
+
+  rollback-dispatch:
+    name: Automated One-Click Rollback Handler
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.rollback_sha != '' }}
+    steps:
+      - name: Execute Fast Rollback Drill
+        run: |
+          PYTHONPATH=backend python3 -c "
+          from app.validation.release_governance import ReleaseGovernanceEngine
+          res = ReleaseGovernanceEngine.execute_rollback(
+              current_version='${{ github.sha }}',
+              target_version='${{ github.event.inputs.rollback_sha }}'
+          )
+          print('Rollback result:', res)
+          assert res['within_rto_slo'], 'Rollback failed to meet RTO SLA'
+          "

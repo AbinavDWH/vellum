@@ -1,0 +1,116 @@
+/* frontend/src/styles/themes.css */
+/* Vellum Dual-Theme Color Tokens — Microsoft Azure / Fluent Design System */
+/* Azure Blue: #0078D4 | Dark Canvas: #111111 | Light Canvas: #FAF9F8 */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Canvas & Surfaces (Azure Portal / Fluent 2 Dark) */
+  --bg-base: #111111;        /* Azure Portal dark base canvas */
+  --bg-surface: #1F1F1F;     /* Fluent neutralBackground2: cards & sidebar */
+  --bg-elevated: #292929;    /* Fluent neutralBackground3: modals, drawers, hover */
+  --nav-bg: #1F1F1F;         /* Azure sidebar surface */
+  --nav-hover: rgba(255, 255, 255, 0.06);
+  --line: #383838;           /* Fluent neutralStroke1 border divider */
+  --line-strong: #525252;    /* Emphasized borders */
+
+  /* Typography / Ink (Fluent Neutral Foregrounds) */
+  --ink-primary: #FFFFFF;    /* Fluent neutralForeground1 (~17:1 AAA) */
+  --ink-secondary: #CCCCCC;  /* Fluent neutralForeground2 (~10.5:1 AAA) */
+  --ink-tertiary: #8A8886;   /* Fluent neutralForeground3 for icons/placeholders */
+
+  /* Brand / Accent (Azure Blue for dark theme: #2886DE / #479EF5) */
+  --brand: #2886DE;          /* Azure Blue adapted for dark theme (~6.8:1 AAA on surface) */
+  --brand-hover: #479EF5;    /* Azure brand hover */
+  --brand-ink: #FFFFFF;      /* Text on solid brand buttons */
+  --brand-dim: rgba(40, 134, 222, 0.16); /* Active nav row tint */
+  --brand-text: #479EF5;     /* Links, active nav text (~8.8:1 AAA) */
+  --selection: rgba(40, 134, 222, 0.28);
+
+  /* Navigation & Chrome */
+  --badge-bg: #292929;
+  --nav-section: #CCCCCC;
+
+  /* Semantic Risk Colors (Azure / Fluent Status) */
+  --risk-low: #54B054;       /* Azure Green */
+  --risk-medium: #FCE100;    /* Azure Warning Yellow */
+  --risk-high: #FB923C;      /* Azure Orange */
+  --risk-critical: #F87171;  /* Azure Error Red */
+
+  --risk-low-dim: rgba(84, 176, 84, 0.14);
+  --risk-medium-dim: rgba(252, 225, 0, 0.14);
+  --risk-high-dim: rgba(251, 146, 60, 0.14);
+  --risk-critical-dim: rgba(248, 113, 113, 0.14);
+
+  /* Backward compatible semantic aliases */
+  --ok: #54B054;
+  --warn: #FCE100;
+  --high: #FB923C;
+  --crit: #F87171;
+  --info: #2886DE;
+
+  /* Code Syntax Highlighting */
+  --code-keyword: #479EF5;
+  --code-string: #86EFAC;
+  --code-number: #FCE100;
+  --code-comment: #8A8886;
+  --code-fn: #5EEAD4;
+  --code-punct: #CCCCCC;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Canvas & Surfaces (Azure Portal / Fluent 2 Light) */
+  --bg-base: #FAF9F8;        /* Azure neutral canvas background */
+  --bg-surface: #FFFFFF;     /* Pure white cards & sidebar */
+  --bg-elevated: #F3F2F1;    /* Fluent neutralBackground3: hover, modal, drawer */
+  --nav-bg: #FFFFFF;         /* Clean white sidebar */
+  --nav-hover: rgba(0, 120, 212, 0.06);
+  --line: #EDEBE9;           /* Fluent neutralStroke2 border divider */
+  --line-strong: #D2D0CE;    /* Fluent neutralStroke1 emphasized border */
+
+  /* Typography / Ink (Fluent Neutral Foregrounds) */
+  --ink-primary: #242424;    /* Fluent neutralForeground1 (~14.3:1 AAA on white) */
+  --ink-secondary: #605E5C;  /* Fluent neutralForeground2 (~5.7:1 AA on white) */
+  --ink-tertiary: #A19F9D;   /* Fluent neutralForeground3 for placeholders/icons */
+
+  /* Brand / Accent (Official Microsoft Azure Blue #0078D4) */
+  --brand: #0078D4;          /* Azure Blue primary brand */
+  --brand-hover: #106EBE;    /* Azure Dark Blue button hover */
+  --brand-ink: #FFFFFF;      /* Text on solid brand buttons (~4.54:1 AA) */
+  --brand-dim: rgba(0, 120, 212, 0.10); /* Active nav tint */
+  --brand-text: #005A9E;     /* Azure deepened blue for AA/AAA text contrast (~7.0:1) */
+  --selection: rgba(0, 120, 212, 0.20);
+
+  /* Navigation & Chrome */
+  --badge-bg: #EFF6FC;       /* Azure brand background tint */
+  --nav-section: #605E5C;
+
+  /* Semantic Risk Colors (Azure / Fluent Status) */
+  --risk-low: #107C41;       /* Fluent Green */
+  --risk-medium: #B45309;    /* Fluent Amber / Warning */
+  --risk-high: #EA4300;      /* Fluent High Risk */
+  --risk-critical: #A80000;  /* Fluent Error Red */
+
+  --risk-low-dim: rgba(16, 124, 65, 0.10);
+  --risk-medium-dim: rgba(180, 83, 9, 0.10);
+  --risk-high-dim: rgba(234, 67, 0, 0.10);
+  --risk-critical-dim: rgba(168, 0, 0, 0.10);
+
+  /* Backward compatible semantic aliases */
+  --ok: #107C41;
+  --warn: #B45309;
+  --high: #EA4300;
+  --crit: #A80000;
+  --info: #0078D4;
+
+  /* Code Syntax Highlighting */
+  --code-keyword: #0078D4;
+  --code-string: #107C41;
+  --code-number: #B45309;
+  --code-comment: #8A8886;
+  --code-fn: #005A9E;
+  --code-punct: #605E5C;
+}

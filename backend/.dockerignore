@@ -1,0 +1,36 @@
+# Git & IDE
+.git
+.gitignore
+.idea
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Local environments & caches
+.venv
+venv
+ENV
+.pytest_cache
+.coverage
+htmlcov
+
+# Local execution artifacts & databases
+vellum.db
+vellum.db-journal
+vellum.db-wal
+terraform-workspace
+localstack-data
+localstack-init.sh
+
+# Secrets and local credentials
+.env
+.env.*
+*.pem
+*.key
+*.id_rsa
+*.credentials
+
+# Test suites & benchmarks (not needed in lean runtime image)
+tests
