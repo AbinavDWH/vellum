@@ -54,6 +54,9 @@ class TerraformGenerator:
             cloud = {"provider": "aws", "region": "us-east-1", "resources": []}
             ir_dict["cloud"] = cloud
 
+        if environment and not cloud.get("environment"):
+            cloud["environment"] = environment
+
         provider = cloud.get("provider", "aws")
         adapter = self._get_adapter(provider)
 
@@ -74,6 +77,13 @@ class TerraformGenerator:
 
         main_tf_path = plan_dir / "main.tf"
         main_tf_path.write_text(hcl_content, encoding="utf-8")
+
+        try:
+            import json
+            ir_file_path = plan_dir / "plan_ir.json"
+            ir_file_path.write_text(json.dumps(ir_dict, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
         # 4. Generate executable deployment script (deploy.sh)
         deploy_sh_path = plan_dir / "deploy.sh"

@@ -209,7 +209,7 @@ class RequirementsResponse(BaseModel):
 class SessionCreateRequest(BaseModel):
     title: Optional[str] = None
     cloud_provider: Optional[str] = "aws"
-    environment: Optional[str] = "local"
+    environment: Optional[str] = None
 
 
 class SessionUpdateRequest(BaseModel):
@@ -349,7 +349,7 @@ class ConnectionResponse(BaseModel):
 class ConnectionCreateRequest(BaseModel):
     name: str
     provider: str = "aws"
-    environment: str = "local"  # "local", "staging", "prod"
+    environment: Optional[str] = None  # "local", "staging", "prod", "dev"
     auth_method: str = "access_key"  # "access_key", "profile"
     profile_name: Optional[str] = None
     access_key_id: Optional[str] = None

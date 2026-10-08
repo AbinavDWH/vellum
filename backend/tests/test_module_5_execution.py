@@ -8,6 +8,7 @@ def test_execution_against_localstack():
         "cloud": {
             "provider": "aws",
             "region": "us-east-1",
+            "environment": "local",
             "resources": [
                 {"type": "object_storage", "name": "test-bucket", "properties": {"bucket_name": "vellum-test-exec-bucket"}}
             ],

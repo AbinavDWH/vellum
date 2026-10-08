@@ -442,6 +442,13 @@ class ExecutionEngine:
 
             tf_content = main_tf.read_text(encoding="utf-8")
 
+            if current_ir is None and (p_dir / "plan_ir.json").exists():
+                try:
+                    from app.schemas.ir import UniversalIR
+                    current_ir = UniversalIR.model_validate_json((p_dir / "plan_ir.json").read_text(encoding="utf-8"))
+                except Exception as ex:
+                    logger.warning("Failed to load plan_ir.json from plan directory", error=str(ex))
+
             # Resolve target environment and credentials using single authoritative target function
             from app.target import resolve_target
 
@@ -449,7 +456,7 @@ class ExecutionEngine:
             if db is not None:
                 plan = db.query(PlanRecord).filter(PlanRecord.plan_id == plan_id).first()
 
-            target = resolve_target(plan=plan, ir=current_ir, db=db, strict_prod=False)
+            target = resolve_target(plan=plan, ir=current_ir, db=db, strict_prod=False, allow_missing=True)
             if target.error:
                 log(f"🛑 {target.error}")
                 duration = round(time.time() - start_time, 2)

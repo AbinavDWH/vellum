@@ -1,11 +1,14 @@
 import pytest
 from app.target import resolve_target, ProductionConnectionRequiredError
 from app.models import ConnectionRecord, PlanRecord
-from app.schemas.api import ChatRequest
+from app.schemas.api import ChatRequest, SessionCreateRequest, ConnectionCreateRequest
 from app.engines.orchestrator import orchestrator
 from app.engines.terraform_generator import tf_generator
+from app.engines.execution_engine import ExecutionEngine
 from app.schemas.ir import UniversalIR
 import inspect
+from pathlib import Path
+import tempfile
 
 
 def test_target_resolver_connection_conflict(db_session):
@@ -79,20 +82,50 @@ def test_defaults_are_none_and_not_silent_local():
     # 1. ChatRequest schema
     assert ChatRequest.model_fields["environment"].default is None
 
-    # 2. orchestrator.process_natural_language
+    # 2. SessionCreateRequest schema
+    assert SessionCreateRequest.model_fields["environment"].default is None
+
+    # 3. ConnectionCreateRequest schema
+    assert ConnectionCreateRequest.model_fields["environment"].default is None
+
+    # 4. orchestrator.process_natural_language
     pnl_sig = inspect.signature(orchestrator.process_natural_language)
     assert pnl_sig.parameters["environment"].default is None
 
-    # 3. orchestrator.plan_from_requirements
+    # 5. orchestrator.plan_from_requirements
     pfr_sig = inspect.signature(orchestrator.plan_from_requirements)
     assert pfr_sig.parameters["environment"].default is None
 
-    # 4. tf_generator.generate
+    # 6. tf_generator.generate
     gen_sig = inspect.signature(tf_generator.generate)
     assert gen_sig.parameters["environment"].default is None
 
-    # 5. Calling tf_generator.generate with no environment and IR without environment raises ValueError
+    # 7. Calling tf_generator.generate with no environment and IR without environment raises ValueError
     empty_ir = UniversalIR(intent="empty_plan")
     with pytest.raises(ValueError) as exc:
         tf_generator.generate(empty_ir)
     assert "Target environment is missing" in str(exc.value)
+
+
+def test_execution_engine_missing_environment_fails_cleanly(db_session):
+    """
+    Test Fix 1 (execution engine): execution engine returns a clean 'failed' ExecutionResult
+    when environment is missing rather than raising an unhandled ValueError / crashing.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        main_tf = Path(tmpdir) / "main.tf"
+        main_tf.write_text("terraform { required_version = \">= 1.5.0\" }\n", encoding="utf-8")
+
+        engine = ExecutionEngine()
+        # Empty IR with no environment specified
+        empty_ir = UniversalIR(intent="test")
+        result = engine.execute_plan(
+            plan_dir=tmpdir,
+            plan_id="plan_no_env",
+            current_ir=empty_ir,
+            db=db_session,
+        )
+
+        assert result.success is False
+        assert result.status == "failed"
+        assert "Target environment is missing" in result.error_message

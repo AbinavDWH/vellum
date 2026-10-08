@@ -221,7 +221,10 @@ class CredentialManager:
             ConnectionRecord.is_deleted == False
         ).first()
 
-    def get_active_connection(self, environment: str = "local", db: Optional[Session] = None) -> Optional[ConnectionRecord]:
+    def get_active_connection(self, environment: Optional[str] = None, db: Optional[Session] = None) -> Optional[ConnectionRecord]:
+        if not environment or not str(environment).strip():
+            return None
+
         if db is None:
             from app.database import SessionLocal
             db = SessionLocal()
@@ -252,7 +255,7 @@ class CredentialManager:
         db: Session,
         name: str,
         provider: str = "aws",
-        environment: str = "local",
+        environment: Optional[str] = None,
         auth_method: str = "access_key",
         region: str = "us-east-1",
         access_key_id: Optional[str] = None,
@@ -261,6 +264,8 @@ class CredentialManager:
         profile_name: Optional[str] = None,
         confirm_name: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if not environment or not str(environment).strip():
+            raise ValueError("Target environment is required (e.g. 'local', 'dev', 'staging', 'prod').")
         # Validate unique name
         existing = db.query(ConnectionRecord).filter(
             ConnectionRecord.name == name,
