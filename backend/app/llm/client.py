@@ -1203,10 +1203,26 @@ class HybridLLMClient:
             ])
 
         if intents["wants_storage"]:
+            b_name = "app-data-bucket"
+            rename_match = re.search(r'rename\s+to\s+([a-zA-Z0-9.\-_]+)', req, re.IGNORECASE)
+            reuse_match = re.search(r'resource\s+[\'"]?([a-zA-Z0-9.\-_]+)[\'"]?\s+already\s+exists', req, re.IGNORECASE)
+            called_match = re.search(r'(?:called|named)\s+[\'"]?([a-zA-Z0-9.\-_]+)[\'"]?', req, re.IGNORECASE)
+            bucket_match = re.search(r'bucket\s+[\'"]?([a-zA-Z0-9.\-_]+)[\'"]?', req, re.IGNORECASE)
+            if rename_match:
+                b_name = rename_match.group(1).strip()
+            elif reuse_match:
+                b_name = reuse_match.group(1).strip()
+            elif called_match:
+                b_name = called_match.group(1).strip()
+            elif bucket_match:
+                candidate = bucket_match.group(1).strip()
+                if candidate.lower() not in ["called", "named", "in", "on", "for", "with", "a", "an", "the", "aws", "s3"]:
+                    b_name = candidate
+
             cloud_resources.append({
                 "type": "object_storage",
-                "name": "app_data_bucket",
-                "properties": {"bucket_name": "app-data-bucket", "versioning_enabled": True},
+                "name": b_name.replace("-", "_"),
+                "properties": {"bucket_name": b_name, "versioning_enabled": True},
                 "is_dependency": False,
                 "tags": {"ManagedBy": "Vellum"}
             })

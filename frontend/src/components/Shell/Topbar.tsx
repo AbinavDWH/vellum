@@ -36,11 +36,11 @@ export interface TopbarProps {
 const TARGET_PRESETS = [
   {
     provider: 'aws',
-    environment: 'local',
-    name: 'AWS (LocalStack)',
-    description: 'Local containerized AWS mock (Fast & isolated)',
-    badge: 'LOCAL',
-    badgeColor: 'text-brand bg-brand/10 border-brand/20',
+    environment: 'prod',
+    name: 'AWS (Production)',
+    description: 'Live cloud infrastructure (Critical scope)',
+    badge: 'PROD',
+    badgeColor: 'text-rose-400 bg-rose-500/10 border-rose-500/30',
   },
   {
     provider: 'aws',
@@ -52,27 +52,11 @@ const TARGET_PRESETS = [
   },
   {
     provider: 'aws',
-    environment: 'prod',
-    name: 'AWS (Production)',
-    description: 'Live cloud infrastructure (Critical scope)',
-    badge: 'PROD',
-    badgeColor: 'text-rose-400 bg-rose-500/10 border-rose-500/30',
-  },
-  {
-    provider: 'gcp',
-    environment: 'local',
-    name: 'Google Cloud (GCP)',
-    description: 'Google Cloud Platform simulation',
-    badge: 'GCP',
-    badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
-  },
-  {
-    provider: 'azure',
-    environment: 'local',
-    name: 'Microsoft Azure',
-    description: 'Azure Resource Manager simulation',
-    badge: 'AZURE',
-    badgeColor: 'text-indigo-400 bg-indigo-500/10 border-indigo-500/30',
+    environment: 'dev',
+    name: 'AWS (Development)',
+    description: 'Cloud development environment',
+    badge: 'DEV',
+    badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30',
   },
 ];
 
@@ -92,7 +76,7 @@ export const Topbar: React.FC<TopbarProps> = ({
   const [localLlmOnline, setLocalLlmOnline] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string>('hybrid');
   const [activeModel, setActiveModel] = useState('Detecting...');
-  const [targetCloud, setTargetCloud] = useState('AWS (LocalStack)');
+  const [targetCloud, setTargetCloud] = useState('AWS (Production)');
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [isTargetMenuOpen, setIsTargetMenuOpen] = useState(false);
@@ -105,7 +89,7 @@ export const Topbar: React.FC<TopbarProps> = ({
 
   // Effective target cloud provider & environment
   const effectiveProvider = currentProvider || 'aws';
-  const effectiveEnvironment = currentEnvironment || 'local';
+  const effectiveEnvironment = currentEnvironment || 'prod';
   const activePreset = TARGET_PRESETS.find(
     (p) => p.provider === effectiveProvider && p.environment === effectiveEnvironment
   );
@@ -141,7 +125,7 @@ export const Topbar: React.FC<TopbarProps> = ({
         setActiveModel(data.active_model || 'Groq');
         // Only update targetCloud fallback if parent does not provide currentProvider / currentEnvironment
         if (!currentProvider && !currentEnvironment && data.cloud_provider) {
-          setTargetCloud(`${data.cloud_provider.toUpperCase()} (${data.cloud_env || 'LocalStack'})`);
+          setTargetCloud(`${data.cloud_provider.toUpperCase()} (${data.cloud_env === 'cloud' ? 'Production' : (data.cloud_env || 'Production')})`);
         }
         setConnections(conns);
       } catch {

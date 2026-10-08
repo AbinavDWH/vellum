@@ -30,19 +30,6 @@ def test_e2e_precreate_bucket_auto_import(db_session):
     bucket_name = f"vellum-heal-bkt-{uid}"
     plan_id = f"test-plan-bucket-heal-{uid}"
 
-    # Pre-create bucket in LocalStack
-    try:
-        s3 = boto3.client(
-            "s3",
-            endpoint_url=settings.LOCALSTACK_URL,
-            aws_access_key_id="test",
-            aws_secret_access_key="test",
-            region_name=settings.LOCALSTACK_REGION,
-        )
-        s3.create_bucket(Bucket=bucket_name)
-    except Exception:
-        pass
-
     ir = UniversalIR(
         intent="deploy_cloud",
         cloud=CloudPlan(
@@ -64,7 +51,7 @@ def test_e2e_precreate_bucket_auto_import(db_session):
     db_session.query(AuditLogRecord).filter(AuditLogRecord.plan_id == plan_id).delete()
     db_session.commit()
 
-    plan_dir = tf_generator.generate(ir, environment="local", plan_id=plan_id)
+    plan_dir = tf_generator.generate(ir, environment="dev", plan_id=plan_id)
     # Ensure fresh workspace with no prior tfstate
     for state_file in ["terraform.tfstate", "terraform.tfstate.backup"]:
         p = Path(plan_dir) / state_file
@@ -81,15 +68,37 @@ def test_e2e_precreate_bucket_auto_import(db_session):
     db_session.add(plan_rec)
     db_session.commit()
 
+    from app.target import TargetResolution
+    mock_target = TargetResolution(
+        environment="dev",
+        provider="aws",
+        region="us-east-1",
+        connection_id="conn_test",
+        account_id="123456789012",
+        aws_access_key="AKIAEXAMPLE",
+        aws_secret_key="SECRETEXAMPLE",
+        is_local=False,
+        target_label="AWS Cloud (DEV) • Account: 123456789012 • Region: us-east-1",
+    )
+
     # Execute plan
     events = []
-    res = execution_engine.execute_plan(
-        plan_dir=str(plan_dir),
-        plan_id=plan_id,
-        current_ir=ir,
-        on_event=lambda ev: events.append(ev),
-        db=db_session,
-    )
+    with patch("app.target.resolve_target", return_value=mock_target), \
+         patch.object(execution_engine, "_run_streaming_command") as mock_cmd, \
+         patch("app.healing.playbooks.subprocess.run") as mock_subproc:
+        mock_subproc.return_value = MagicMock(returncode=0)
+        mock_cmd.side_effect = [
+            (0, "Terraform initialized", False),
+            (1, f"Error: creating S3 Bucket ({bucket_name}): BucketAlreadyExists: The requested bucket name is not available.", False),
+            (0, "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", False),
+        ]
+        res = execution_engine.execute_plan(
+            plan_dir=str(plan_dir),
+            plan_id=plan_id,
+            current_ir=ir,
+            on_event=lambda ev: events.append(ev),
+            db=db_session,
+        )
 
     assert res.success is True
     # Audit must show HEAL_APPLIED

@@ -23,7 +23,7 @@ class TargetResolution:
     account_id: Optional[str] = None
     aws_access_key: Optional[str] = None
     aws_secret_key: Optional[str] = None
-    is_local: bool = True
+    is_local: bool = False
     target_label: str = ""
     error: Optional[str] = None
 
@@ -124,7 +124,7 @@ def resolve_target(
             return "prod"
         if val in ["stage", "staging"]:
             return "staging"
-        if val in ["dev", "development"]:
+        if val in ["dev", "development", "local"]:
             return "dev"
         return val
 
@@ -148,13 +148,14 @@ def resolve_target(
                     .first()
                 )
 
-            # If user picked a non-local env without explicit conn_id, find active connection for it
-            if not conn and target_env and target_env.lower() != "local":
+            # If user picked an env without explicit conn_id, find active connection for it
+            if not conn and target_env:
                 norm_env = _norm_env(target_env)
+                lookup_envs = [norm_env, "local"] if norm_env == "dev" else [norm_env]
                 conn = (
                     db.query(ConnectionRecord)
                     .filter(
-                        ConnectionRecord.environment == norm_env,
+                        ConnectionRecord.environment.in_(lookup_envs),
                         ConnectionRecord.is_deleted == False,
                         ConnectionRecord.status.in_(["connected", "active"]),
                     )
@@ -164,7 +165,10 @@ def resolve_target(
                 if not conn:
                     conn = (
                         db.query(ConnectionRecord)
-                        .filter(ConnectionRecord.environment == norm_env, ConnectionRecord.is_deleted == False)
+                        .filter(
+                            ConnectionRecord.environment.in_(lookup_envs),
+                            ConnectionRecord.is_deleted == False,
+                        )
                         .order_by(ConnectionRecord.updated_at.desc())
                         .first()
                     )
@@ -175,14 +179,9 @@ def resolve_target(
 
                 if norm_explicit_env and norm_conn_env and norm_explicit_env != norm_conn_env:
                     mismatch_err = f"Plan is bound to a {conn.environment} connection but you selected {explicit_env}. Re-plan."
-                    is_local = (norm_explicit_env == "local")
-                    reg = target_region or (settings.LOCALSTACK_REGION if is_local else "us-east-1") or "us-east-1"
-                    lbl = (
-                        f"LocalStack (Simulation) • Account: 000000000000 • Region: {reg}"
-                        if is_local
-                        else f"AWS Cloud ({norm_explicit_env.upper()}) • Account: {conn.account_id or 'unknown'} • Region: {reg}"
-                    )
-                    if strict_prod and not is_local:
+                    reg = target_region or getattr(settings, "DEFAULT_AWS_REGION", "us-east-1") or "us-east-1"
+                    lbl = f"AWS Cloud ({norm_explicit_env.upper()}) • Account: {conn.account_id or 'unknown'} • Region: {reg}"
+                    if strict_prod:
                         raise ProductionConnectionRequiredError(mismatch_err)
                     return TargetResolution(
                         environment=norm_explicit_env,
@@ -192,7 +191,7 @@ def resolve_target(
                         account_id=conn.account_id,
                         aws_access_key=None,
                         aws_secret_key=None,
-                        is_local=is_local,
+                        is_local=False,
                         target_label=lbl,
                         error=mismatch_err,
                     )
@@ -218,36 +217,33 @@ def resolve_target(
             return TargetResolution(
                 environment="",
                 provider=target_provider,
-                region=target_region or "us-east-1",
+                region=target_region or getattr(settings, "DEFAULT_AWS_REGION", "us-east-1") or "us-east-1",
                 is_local=False,
-                error="Target environment is missing. Please select a target environment (e.g. LocalStack or an AWS connection).",
+                error="Target environment is missing. Please select an AWS environment (e.g. dev, staging, prod).",
             )
         raise ValueError(
-            "Target environment is missing. Please select an environment (e.g., LocalStack or an AWS connection) before proceeding."
+            "Target environment is missing. Please select an AWS environment (e.g. dev, staging, prod) before proceeding."
         )
 
     # Normalize environment and region
     target_env = _norm_env(target_env)
-    is_local = (target_env == "local")
-    target_region = _norm_region(target_region) or (settings.LOCALSTACK_REGION if is_local else "us-east-1") or "us-east-1"
+    if target_env == "local":
+        target_env = "dev"
+    is_local = False
+    target_region = _norm_region(target_region) or getattr(settings, "DEFAULT_AWS_REGION", "us-east-1") or "us-east-1"
 
-    # 6. Block any non-local environment without an active authenticated connection
+    # 6. Block deployment without an active authenticated AWS connection
     prod_error: Optional[str] = None
-    if not is_local:
-        if not conn or not (aws_access_key and aws_secret_key):
-            prod_error = (
-                f"Deployment to '{target_env.upper()}' is blocked without an active, authenticated AWS connection. "
-                "Host computer AWS credentials fallback is prohibited to prevent accidental deployment to the wrong account."
-            )
-            if strict_prod:
-                raise ProductionConnectionRequiredError(prod_error)
+    if not conn or not (aws_access_key and aws_secret_key):
+        prod_error = (
+            f"Deployment to '{target_env.upper()}' is blocked without an active, authenticated AWS connection. "
+            "Host computer AWS credentials fallback is prohibited to prevent accidental deployment to the wrong account."
+        )
+        if strict_prod:
+            raise ProductionConnectionRequiredError(prod_error)
 
     # 7. Generate authoritative target label
-    if is_local:
-        account_id = account_id or "000000000000"
-        target_label = f"LocalStack (Simulation) • Account: {account_id} • Region: {target_region}"
-    else:
-        target_label = f"AWS Cloud ({target_env.upper()}) • Account: {account_id or 'unknown'} • Region: {target_region}"
+    target_label = f"AWS Cloud ({target_env.upper()}) • Account: {account_id or 'unknown'} • Region: {target_region}"
 
     return TargetResolution(
         environment=target_env,

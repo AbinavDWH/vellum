@@ -74,10 +74,10 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
     api.getPlan(planId).then(setPlanDetails).catch(() => {});
   }, [planId]);
 
-  const targetEnv = planDetails?.environment || planDetails?.ir?.cloud?.environment || 'local';
+  const rawEnv = planDetails?.environment || planDetails?.ir?.cloud?.environment || 'dev';
+  const targetEnv = rawEnv === 'local' ? 'dev' : rawEnv;
   const targetProvider = (planDetails?.ir?.cloud?.provider || 'aws').toUpperCase();
-  const isLocal = targetEnv === 'local';
-  const targetLabel = planDetails?.target_label || (isLocal ? 'LocalStack (Simulation)' : `${targetProvider} Cloud (${targetEnv.toUpperCase()})` + (planDetails?.account_id ? ` • Account: ${planDetails.account_id}` : '') + (planDetails?.region ? ` (${planDetails.region})` : ''));
+  const targetLabel = planDetails?.target_label || (`${targetProvider} Cloud (${targetEnv.toUpperCase()})` + (planDetails?.account_id ? ` • Account: ${planDetails.account_id}` : '') + (planDetails?.region ? ` (${planDetails.region})` : ''));
 
   // M-14 Self-Healing state
   const [healingAttempts, setHealingAttempts] = useState<HealingAttempt[]>([]);

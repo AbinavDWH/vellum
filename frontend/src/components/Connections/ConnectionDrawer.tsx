@@ -64,7 +64,7 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
   const isEdit = Boolean(connection);
 
   const [provider, setProvider] = useState('aws');
-  const [environment, setEnvironment] = useState<'local' | 'staging' | 'prod'>('local');
+  const [environment, setEnvironment] = useState<'dev' | 'staging' | 'prod'>('prod');
   const [name, setName] = useState('');
   const [authMethod, setAuthMethod] = useState<'access_key' | 'profile'>('access_key');
   const [profileName, setProfileName] = useState('default');
@@ -85,7 +85,8 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
     if (connection) {
       setName(connection.name);
       setProvider(connection.provider || 'aws');
-      setEnvironment(connection.environment || 'local');
+      const env = connection.environment === 'local' ? 'dev' : (connection.environment || 'dev');
+      setEnvironment(env as 'dev' | 'staging' | 'prod');
       setAuthMethod(connection.auth_method || 'access_key');
       setProfileName(connection.profile_name || 'default');
       setAccessKeyId(connection.key_prefix && connection.key_last4 ? `${connection.key_prefix}123456789012${connection.key_last4}` : '');
@@ -98,7 +99,7 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
     } else {
       setName('');
       setProvider('aws');
-      setEnvironment('local');
+      setEnvironment('dev');
       setAuthMethod('access_key');
       setProfileName('default');
       setAccessKeyId('');
@@ -299,7 +300,7 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
                 Environment
               </label>
               <div className="flex items-center gap-1.5 pt-0.5">
-                {(['local', 'staging', 'prod'] as const).map((env) => {
+                {(['dev', 'staging', 'prod'] as const).map((env) => {
                   const selected = environment === env;
                   const isEnvProd = env === 'prod';
                   return (
@@ -315,7 +316,7 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
                           : 'bg-canvas border-line text-ink-tertiary hover:text-ink-primary'
                       }`}
                     >
-                      {isEnvProd ? 'PROD' : env}
+                      {isEnvProd ? 'PROD' : env.toUpperCase()}
                     </button>
                   );
                 })}
@@ -498,9 +499,7 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
                   Services (Scope)
                 </label>
                 <p className="text-[11px] text-ink-tertiary">
-                  {environment === 'local'
-                    ? 'LocalStack services simulated in container'
-                    : "Allowed scope: Vellum rejects plan/execute outside selected services"}
+                  Allowed scope: Vellum rejects plan/execute outside selected services
                 </p>
               </div>
 
@@ -529,13 +528,6 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
                 </button>
               </div>
             </div>
-
-            {environment === 'local' && (
-              <p className="text-[11px] text-warn mb-2 flex items-center gap-1 font-medium">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                LocalStack: change requires container restart
-              </p>
-            )}
 
             {/* Service Toggle Chips */}
             <div className="flex flex-wrap gap-1.5">

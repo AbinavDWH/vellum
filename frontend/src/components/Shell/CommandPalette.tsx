@@ -86,7 +86,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       title: 'Environment & Connections',
       category: 'Navigation',
       icon: <Server className="h-4 w-4 text-high" />,
-      hint: 'LocalStack & LM Studio status',
+      hint: 'Cloud & AI Engine status',
       action: () => {
         onNavigate('connections');
         onClose();

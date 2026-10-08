@@ -492,15 +492,6 @@ export const api = {
     }
     return res.json();
   },
-
-  async restartLocalStack(): Promise<{ status: string; running_services: string[]; message: string }> {
-    const res = await fetch(`${API_BASE}/localstack/restart`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!res.ok) throw new Error('Failed to restart LocalStack');
-    return res.json();
-  },
 };
 
 

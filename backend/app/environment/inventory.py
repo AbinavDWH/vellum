@@ -37,6 +37,10 @@ class EnvironmentInventoryService:
         self._call_log: List[Dict[str, Any]] = []
         self._api_call_count: int = 0
 
+    def clear_cache(self):
+        """Clear cached snapshots."""
+        self._cache.clear()
+
     def reset_call_metrics(self):
         """Reset call metrics (useful for testing API storm assertions)."""
         self._call_log.clear()
@@ -60,29 +64,31 @@ class EnvironmentInventoryService:
         self,
         service_name: str,
         region: str = "us-east-1",
-        environment: str = "local",
+        environment: str = "dev",
         db: Optional[Any] = None,
     ):
-        """Factory for AWS / LocalStack clients."""
-        if environment == "local":
-            return boto3.client(
-                service_name,
-                endpoint_url=settings.LOCALSTACK_URL,
-                aws_access_key_id="test",
-                aws_secret_access_key="test",
-                region_name=region,
-            )
-
-        # Real AWS (prod / staging)
+        """Factory for AWS Cloud clients."""
         client_kwargs: Dict[str, Any] = {"region_name": region}
-        if db is not None:
+        has_credentials = False
+        close_db = False
+        active_db = db
+        if active_db is None:
+            try:
+                from app.database import SessionLocal
+                active_db = SessionLocal()
+                close_db = True
+            except Exception:
+                active_db = None
+
+        if active_db is not None:
             try:
                 from app.models import ConnectionRecord
                 from app.credentials.manager import credential_manager
+                env_filter = [environment, "dev"] if environment in ["local", "dev"] else [environment]
                 conn = (
-                    db.query(ConnectionRecord)
+                    active_db.query(ConnectionRecord)
                     .filter(
-                        ConnectionRecord.environment == environment,
+                        ConnectionRecord.environment.in_(env_filter),
                         ConnectionRecord.is_deleted == False,
                         ConnectionRecord.status.in_(["connected", "active"]),
                     )
@@ -91,16 +97,28 @@ class EnvironmentInventoryService:
                 )
                 if not conn:
                     conn = (
-                        db.query(ConnectionRecord)
-                        .filter(ConnectionRecord.environment == environment, ConnectionRecord.is_deleted == False)
+                        active_db.query(ConnectionRecord)
+                        .filter(
+                            ConnectionRecord.environment.in_(env_filter),
+                            ConnectionRecord.is_deleted == False,
+                        )
                         .order_by(ConnectionRecord.updated_at.desc())
                         .first()
                     )
                 if conn and conn.encrypted_access_key and conn.encrypted_secret_key:
                     client_kwargs["aws_access_key_id"] = credential_manager.decrypt(conn.encrypted_access_key)
                     client_kwargs["aws_secret_access_key"] = credential_manager.decrypt(conn.encrypted_secret_key)
+                    has_credentials = True
             except Exception:
                 pass
+            finally:
+                if close_db:
+                    active_db.close()
+
+        if not has_credentials:
+            client_kwargs["aws_access_key_id"] = "NONE"
+            client_kwargs["aws_secret_access_key"] = "NONE"
+
         return boto3.client(service_name, **client_kwargs)
 
     def _record_call(self, service: str, method: str):
@@ -116,7 +134,7 @@ class EnvironmentInventoryService:
             "timestamp": time.time(),
         })
 
-    def _scan_s3(self, region: str, environment: str = "local", db: Optional[Any] = None) -> List[str]:
+    def _scan_s3(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> List[str]:
         self._record_call("s3", "list_buckets")
         try:
             client = self._get_boto3_client("s3", region, environment, db)
@@ -126,7 +144,7 @@ class EnvironmentInventoryService:
             logger.warning("Pre-flight S3 scan notice", error=str(e))
             return []
 
-    def _scan_vpcs(self, region: str, environment: str = "local", db: Optional[Any] = None) -> List[Dict[str, Any]]:
+    def _scan_vpcs(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> List[Dict[str, Any]]:
         self._record_call("ec2", "describe_vpcs")
         try:
             client = self._get_boto3_client("ec2", region, environment, db)
@@ -149,7 +167,7 @@ class EnvironmentInventoryService:
             logger.warning("Pre-flight VPC scan notice", error=str(e))
             return []
 
-    def _scan_subnets(self, region: str, environment: str = "local", db: Optional[Any] = None) -> List[Dict[str, Any]]:
+    def _scan_subnets(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> List[Dict[str, Any]]:
         self._record_call("ec2", "describe_subnets")
         try:
             client = self._get_boto3_client("ec2", region, environment, db)
@@ -167,7 +185,7 @@ class EnvironmentInventoryService:
             logger.warning("Pre-flight Subnet scan notice", error=str(e))
             return []
 
-    def _scan_security_groups(self, region: str, environment: str = "local", db: Optional[Any] = None) -> List[Dict[str, Any]]:
+    def _scan_security_groups(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> List[Dict[str, Any]]:
         self._record_call("ec2", "describe_security_groups")
         try:
             client = self._get_boto3_client("ec2", region, environment, db)
@@ -185,7 +203,7 @@ class EnvironmentInventoryService:
             logger.warning("Pre-flight Security Group scan notice", error=str(e))
             return []
 
-    def _scan_rds(self, region: str, environment: str = "local", db: Optional[Any] = None) -> List[Dict[str, Any]]:
+    def _scan_rds(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> List[Dict[str, Any]]:
         self._record_call("rds", "describe_db_instances")
         try:
             client = self._get_boto3_client("rds", region, environment, db)
@@ -204,7 +222,7 @@ class EnvironmentInventoryService:
             logger.warning("Pre-flight RDS scan notice", error=str(e))
             return []
 
-    def _scan_iam(self, region: str, environment: str = "local", db: Optional[Any] = None) -> Tuple[List[str], List[str]]:
+    def _scan_iam(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> Tuple[List[str], List[str]]:
         roles = []
         users = []
         self._record_call("iam", "list_roles")
@@ -225,7 +243,7 @@ class EnvironmentInventoryService:
 
         return roles, users
 
-    def _scan_instance_offerings(self, region: str, environment: str = "local", db: Optional[Any] = None) -> List[str]:
+    def _scan_instance_offerings(self, region: str, environment: str = "dev", db: Optional[Any] = None) -> List[str]:
         self._record_call("ec2", "describe_instance_type_offerings")
         try:
             client = self._get_boto3_client("ec2", region, environment, db)
@@ -295,7 +313,7 @@ class EnvironmentInventoryService:
         self,
         provider: str = "aws",
         region: str = "us-east-1",
-        environment: str = "local",
+        environment: str = "dev",
         force_rescan: bool = False,
         plan_id: Optional[str] = None,
         db: Optional[Any] = None,
@@ -305,6 +323,9 @@ class EnvironmentInventoryService:
         If cache is younger than TTL (60s) and force_rescan is False, returns cached snapshot.
         Otherwise performs parallel read-only scan, calculates hash, and updates cache.
         """
+        if environment == "local":
+            environment = "dev"
+
         cache_key = f"{provider}:{environment}:{region}"
         now = time.time()
 
@@ -348,14 +369,11 @@ class EnvironmentInventoryService:
 
         # Check if environment is unavailable
         is_unavailable = False
-        if environment == "local":
-            try:
-                import httpx
-                r = httpx.get(f"{settings.LOCALSTACK_URL}/_localstack/health", timeout=1.5)
-                if r.status_code != 200:
-                    is_unavailable = True
-            except Exception:
-                is_unavailable = True
+        try:
+            sts_client = self._get_boto3_client("sts", region, environment, db)
+            sts_client.get_caller_identity()
+        except Exception:
+            is_unavailable = True
 
         snapshot = EnvironmentSnapshot(
             snapshot_id=f"snap_{uuid.uuid4().hex[:8]}",

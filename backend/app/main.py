@@ -1116,7 +1116,7 @@ def list_plan_executions(plan_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/plans/{plan_id}/verify", response_model=VerificationResult)
 def verify_plan(plan_id: str, db: Session = Depends(get_db)):
-    """Verify state and detect drift against LocalStack."""
+    """Verify state and detect drift against AWS Cloud."""
     plan = db.query(PlanRecord).filter(PlanRecord.plan_id == plan_id).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
@@ -1675,7 +1675,7 @@ def get_environment_snapshot(
     if not environment or not str(environment).strip():
         raise HTTPException(
             status_code=400,
-            detail="Target environment is missing. Please select an environment (e.g., LocalStack or an AWS connection).",
+            detail="Target environment is missing. Please select an AWS environment (e.g. dev, staging, prod) or connect your AWS account.",
         )
     snap = environment_inventory.get_snapshot(provider=provider, region=region, environment=environment, force_rescan=force_rescan, db=db)
     return {
@@ -1716,7 +1716,7 @@ def rescan_environment(
     if not environment or not str(environment).strip():
         raise HTTPException(
             status_code=400,
-            detail="Target environment is missing. Please select an environment (e.g., LocalStack or an AWS connection).",
+            detail="Target environment is missing. Please select an AWS environment (e.g. dev, staging, prod) or connect your AWS account.",
         )
     snap = environment_inventory.get_snapshot(provider=provider, region=region, environment=environment, force_rescan=True, db=db)
     return {

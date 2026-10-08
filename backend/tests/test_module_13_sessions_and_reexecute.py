@@ -216,7 +216,20 @@ def test_reexecute_flow_drift_requires_fresh_approval(clean_db):
     clean_db.commit()
 
     # 1. Re-execute triggers dry-run and detects drift (missing bucket)
-    reexec_res = client.post(f"/api/plans/{plan_id}/re-execute")
+    from unittest.mock import patch
+    from app.engines.verification_engine import verification_engine
+
+    mock_drift = {
+        "status": "drift_detected",
+        "drift_detected": True,
+        "resources_verified": 0,
+        "missing_resources": ["vellum_missing_bucket_99"],
+        "unexpected_resources": [],
+        "modified_resources": [],
+    }
+    with patch.object(verification_engine, "verify", return_value=mock_drift):
+        reexec_res = client.post(f"/api/plans/{plan_id}/re-execute")
+
     assert reexec_res.status_code == 200
     data = reexec_res.json()
 

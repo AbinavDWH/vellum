@@ -16,11 +16,11 @@ class CloudProviderAdapter(ABC):
         pass
 
     @abstractmethod
-    def generate_terraform(self, mapped_resources: List[Dict[str, Any]], environment: str = "local") -> str:
+    def generate_terraform(self, mapped_resources: List[Dict[str, Any]], environment: str = "dev") -> str:
         """Generate provider-specific Terraform HCL."""
         pass
 
-    @abstractmethod
     def get_local_endpoint(self) -> str:
-        """Return local simulation endpoint."""
-        pass
+        """Return local simulation endpoint if supported, or empty string."""
+        return ""
+

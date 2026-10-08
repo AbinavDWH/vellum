@@ -39,59 +39,22 @@ def seed_test_prod_connection(db_session):
     db_session.commit()
 
 
-def test_m18_s3_create_bucket_region_matrix():
+def test_m18_direct_boto3_simulation_prohibited_all_environments():
     """
-    Test Fix 3: S3 CreateBucket must omit CreateBucketConfiguration for us-east-1,
-    and include LocationConstraint for any other AWS region.
+    Test that calling direct boto3 provisioning is strictly prohibited in all environments.
+    Vellum operates exclusively with Terraform against AWS Cloud.
     """
-    tf_hcl = 'resource "aws_s3_bucket" "test_b" { bucket = "vellum-bucket-test-123" }'
-
-    for region in ["us-east-1", "eu-west-1", "ap-south-1"]:
-        with patch("boto3.client") as mock_boto:
-            mock_s3 = MagicMock()
-            mock_boto.return_value = mock_s3
-
-            res = execution_engine._execute_via_boto3(
-                tf_content=tf_hcl,
-                plan_id="plan_test_s3_matrix",
+    for env in ["local", "dev", "staging", "prod"]:
+        with pytest.raises(RuntimeError) as exc_info:
+            execution_engine._execute_via_boto3(
+                tf_content='resource "aws_s3_bucket" "b" { bucket = "cloud-bucket" }',
+                plan_id=f"plan_{env}_forbidden",
                 start_time=0.0,
                 log=lambda m: None,
-                target_env="local",
-                target_region=region,
+                target_env=env,
+                target_region="us-east-1",
             )
-
-            assert res.success is True
-            mock_boto.assert_called_with(
-                "s3",
-                region_name=region,
-                endpoint_url=settings.LOCALSTACK_URL,
-                aws_access_key_id="test",
-                aws_secret_access_key="test",
-            )
-
-            if region == "us-east-1":
-                mock_s3.create_bucket.assert_called_with(Bucket="vellum-bucket-test-123")
-            else:
-                mock_s3.create_bucket.assert_called_with(
-                    Bucket="vellum-bucket-test-123",
-                    CreateBucketConfiguration={"LocationConstraint": region},
-                )
-
-
-def test_m18_direct_boto3_prohibited_in_prod():
-    """
-    Test Fix 2: Calling direct boto3 provisioning in PROD/STAGING is strictly prohibited.
-    """
-    with pytest.raises(RuntimeError) as exc_info:
-        execution_engine._execute_via_boto3(
-            tf_content='resource "aws_s3_bucket" "b" { bucket = "prod-bucket" }',
-            plan_id="plan_prod_forbidden",
-            start_time=0.0,
-            log=lambda m: None,
-            target_env="prod",
-            target_region="us-east-1",
-        )
-    assert "Direct boto3 provisioning is prohibited in PROD/STAGING" in str(exc_info.value)
+        assert "Direct boto3 simulation is prohibited" in str(exc_info.value)
 
 
 def test_m18_prod_timeout_reconciling_and_no_boto3_fallback(tmp_path, db_session, seed_test_prod_connection):
@@ -244,7 +207,7 @@ def test_m18_verification_fail_closed_on_missing_or_test_credentials(db_session)
 
     assert report_test_keys["status"] == "incident"
     assert report_test_keys["drift_detected"] is False
-    assert "Refusing to verify against LocalStack (Fail-Closed)" in report_test_keys["error_message"]
+    assert "Fail-Closed" in report_test_keys["error_message"]
 
 
 def test_m18_verification_header_labels_for_prod_and_local():
@@ -256,16 +219,16 @@ def test_m18_verification_header_labels_for_prod_and_local():
         cloud={"provider": "aws", "environment": "local", "region": "us-west-2", "resources": []}
     )
 
-    # Local environment
+    # Local environment (normalized to dev)
     local_report = verification_engine.verify(
         plan_id="plan_local_test",
         expected_ir=ir,
         environment="local",
         region="us-west-2",
     )
-    assert local_report["target_environment"] == "local"
-    assert "LocalStack (Simulation)" in local_report["audited_target_label"]
-    assert "us-west-2" in local_report["audited_target_label"]
+    assert local_report["target_environment"] == "dev"
+    assert "AWS Cloud (DEV)" in local_report["audited_target_label"]
+    assert "TARGET MISMATCH" in local_report["audited_target_label"]
 
     # PROD with authenticated credentials
     with patch("boto3.client") as mock_boto:

@@ -4,6 +4,7 @@ Covers F1 through F8, Golden suite (10 prompts), incident replays, and audit cha
 """
 
 import json
+from unittest.mock import patch, MagicMock
 import pytest
 from app.database import SessionLocal
 from app.models import PlanRecord, ExecutionRecord
@@ -93,23 +94,24 @@ def test_gate_f3_content_deployment_capabilities():
     assert mimetypes.guess_type("style.css")[0] == "text/css"
     assert mimetypes.guess_type("script.js")[0] in ["application/javascript", "text/javascript"]
 
-    # Test sync against LocalStack S3
-    import boto3
-    s3 = boto3.client("s3", endpoint_url="http://localhost:4566", aws_access_key_id="test", aws_secret_access_key="test", region_name="us-east-1")
+    # Test sync against AWS S3
     bucket = "gate-f3-test-bucket"
-    try:
-        s3.create_bucket(Bucket=bucket)
-    except Exception:
-        pass
+    with patch("boto3.client") as mock_boto, patch("httpx.get") as mock_http:
+        mock_s3 = MagicMock()
+        mock_s3.head_object.return_value = {"ETag": '"test-etag"'}
+        mock_boto.return_value = mock_s3
+        mock_http.return_value = MagicMock(status_code=200, headers={"etag": "test-etag"})
 
-    url, meta = execution_engine.sync_static_site_content(
-        bucket_name=bucket,
-        site_source={"type": "inline", "content": "<h1>Gate F3 Live</h1>"},
-        is_local=True,
-    )
-    assert url is not None
-    assert meta.get("files_count", 0) >= 1
-    assert "etag" in meta
+        url, meta = execution_engine.sync_static_site_content(
+            bucket_name=bucket,
+            site_source={"type": "inline", "content": "<h1>Gate F3 Live</h1>"},
+            is_local=False,
+            aws_access_key="AKIAEXAMPLE",
+            aws_secret_key="SECRETEXAMPLE",
+        )
+        assert url is not None
+        assert meta.get("files_count", 0) >= 1
+        assert "etag" in meta
 
 
 def test_gate_f4_scope_fidelity():

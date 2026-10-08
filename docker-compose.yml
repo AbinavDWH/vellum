@@ -2,33 +2,7 @@ version: "3.9"
 
 services:
   # ============================================
-  # LOCALSTACK — AWS Simulation
-  # ============================================
-  localstack:
-    image: localstack/localstack:4.4.0
-    container_name: vellum-localstack
-    ports:
-      - "4566:4566"            # Main AWS API endpoint
-      - "4510-4559:4510-4559"  # External services range
-    environment:
-      - SERVICES=s3,ec2,vpc,rds,iam,sts,cloudwatch
-      - DEBUG=1
-      - DOCKER_HOST=unix:///var/run/docker.sock
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
-    volumes:
-      - "./localstack-data:/var/lib/localstack"
-      - "/var/run/docker.sock:/var/run/docker.sock"
-      - "./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ============================================
-  # POSTGRESQL — Local database for testing
+  # POSTGRESQL — Metadata database
   # ============================================
   postgres:
     image: postgres:15-alpine
@@ -67,15 +41,12 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - CLOUD_ENV=local
-      - LOCALSTACK_URL=http://localstack:4566
+      - CLOUD_ENV=cloud
       - DATABASE_URL=postgresql://vellum:dev_password_only@postgres:5432/vellum_metadata
       - REDIS_URL=redis://redis:6379/0
       - LM_STUDIO_URL=http://host.docker.internal:1234/v1
       - HUMAN_APPROVAL_REQUIRED=true
     depends_on:
-      localstack:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:

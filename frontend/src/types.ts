@@ -405,7 +405,7 @@ export interface Connection {
   id: string;
   name: string;
   provider: string;
-  environment: 'local' | 'staging' | 'prod';
+  environment: 'dev' | 'staging' | 'prod' | 'local';
   auth_method: 'access_key' | 'profile';
   profile_name?: string | null;
   region: string;
@@ -439,7 +439,7 @@ export interface ConnectionTestResult {
 export interface ConnectionFormData {
   name: string;
   provider: string;
-  environment: 'local' | 'staging' | 'prod';
+  environment: 'dev' | 'staging' | 'prod' | 'local';
   auth_method: 'access_key' | 'profile';
   profile_name?: string;
   access_key_id?: string;

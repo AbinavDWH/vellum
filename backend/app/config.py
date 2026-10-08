@@ -12,14 +12,13 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
 
     # Cloud Environment
-    CLOUD_ENV: str = "local"  # "local" or "cloud"
+    CLOUD_ENV: str = "cloud"  # "cloud"
     CLOUD_PROVIDER: str = "aws"  # "aws", "azure", "gcp"
 
-    # LocalStack / AWS
-    LOCALSTACK_URL: str = "http://localhost:4566"
-    LOCALSTACK_REGION: str = "us-east-1"
-    AWS_ACCESS_KEY_ID: str = "test"
-    AWS_SECRET_ACCESS_KEY: str = "test"
+    # AWS Cloud
+    DEFAULT_AWS_REGION: str = "us-east-1"
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
 
     # LM Studio (Local LLM)
     LM_STUDIO_URL: str = "http://localhost:1234/v1"

@@ -105,7 +105,7 @@ export const ExecutionsView: React.FC<ExecutionsViewProps> = ({
       } else {
         toast({
           title: 'Verification Passed',
-          description: `All ${res.resources_verified} resources verified healthy in LocalStack.`,
+          description: `All ${res.resources_verified} resources verified healthy in target cloud.`,
           type: 'success',
         });
       }
@@ -168,7 +168,7 @@ export const ExecutionsView: React.FC<ExecutionsViewProps> = ({
         <div>
           <h1 className="text-xl font-bold tracking-tight text-ink-primary">Execution & Console</h1>
           <p className="text-xs text-ink-secondary">
-            Execute approved plans against LocalStack, inspect run history, and stream live Terraform logs
+            Execute approved plans against target cloud, inspect run history, and stream live Terraform logs
           </p>
         </div>
         <Button variant="primary" size="sm" onClick={() => onGoToDesigner()}>

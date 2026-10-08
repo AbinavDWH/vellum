@@ -143,7 +143,7 @@ export const SettingsView: React.FC = () => {
               <div>
                 <div className="font-semibold text-ink-primary">Auto-Verify After Execution</div>
                 <div className="text-ink-secondary text-[11px]">
-                  Automatically audit LocalStack resources and detect drift upon Terraform apply completion
+                  Automatically audit target cloud resources and detect drift upon Terraform apply completion
                 </div>
               </div>
               <input

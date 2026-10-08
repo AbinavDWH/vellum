@@ -95,15 +95,15 @@ class VellumOrchestrator:
         if target_res.error and not target_res.environment:
             return ChatResponse(
                 status="clarification_needed",
-                message="Target environment is missing. Please select a target environment (e.g. LocalStack or an AWS connection) before proceeding.",
+                message="Target environment is missing. Please select an AWS target environment (e.g. Production, Staging, or Development) before proceeding.",
                 clarification=ClarificationResponse(
                     is_ready=False,
                     questions=[
                         ClarificationQuestion(
-                            question="Which target environment should be used?",
+                            question="Which AWS target environment should be used?",
                             context="Target environment must be explicitly selected.",
-                            default_suggestion="LocalStack",
-                            options=["LocalStack (Simulation)", "AWS Production", "AWS Staging"],
+                            default_suggestion="AWS Production",
+                            options=["AWS Production", "AWS Staging", "AWS Development"],
                         )
                     ]
                 )

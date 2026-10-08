@@ -112,9 +112,11 @@ export const App: React.FC = () => {
   });
   const [targetEnvironment, setTargetEnvironment] = useState<string>(() => {
     try {
-      return localStorage.getItem('vellum_target_environment') || 'local';
+      const stored = localStorage.getItem('vellum_target_environment');
+      if (stored && stored !== 'local') return stored;
+      return 'prod';
     } catch {
-      return 'local';
+      return 'prod';
     }
   });
   const [currentRequirementsMd, setCurrentRequirementsMd] = useState<string>('');
@@ -197,15 +199,12 @@ export const App: React.FC = () => {
 
         if (envMatch && envMatch[1]) {
           const loadedEnv = envMatch[1].trim().toLowerCase();
-          if (loadedEnv === 'prod' || loadedEnv === 'staging') {
+          if (loadedEnv === 'prod' || loadedEnv === 'staging' || loadedEnv === 'dev') {
             setTargetEnvironment(loadedEnv);
             try { localStorage.setItem('vellum_target_environment', loadedEnv); } catch {}
-          } else if (targetEnvironment === 'prod' && isDefaultTemplate) {
+          } else if (isDefaultTemplate || loadedEnv === 'local') {
             const upgradedMd = mdText.replace(/(\*\*Environment\*\*:\s*)[a-zA-Z0-9_-]+/gi, `$1${targetEnvironment}`);
             api.updateSessionRequirements(sessionId, upgradedMd).catch(() => {});
-          } else if (loadedEnv === 'local' && targetEnvironment !== 'prod') {
-            setTargetEnvironment('local');
-            try { localStorage.setItem('vellum_target_environment', 'local'); } catch {}
           }
         }
         if (provMatch && provMatch[1]) {

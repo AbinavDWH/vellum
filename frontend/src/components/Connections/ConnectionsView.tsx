@@ -31,7 +31,6 @@ export const ConnectionsView: React.FC = () => {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [healthData, setHealthData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [restartingLocalstack, setRestartingLocalstack] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
 
   // Drawer state
@@ -114,35 +113,6 @@ export const ConnectionsView: React.FC = () => {
     }
   };
 
-  const handleApplyRestart = async () => {
-    setRestartingLocalstack(true);
-    try {
-      const res = await api.restartLocalStack();
-      if (res.status === 'failed' || res.status === 'error') {
-        toast({
-          title: 'LocalStack Restart Failed',
-          description: res.message || 'Could not restart LocalStack container',
-          type: 'crit',
-        });
-      } else {
-        toast({
-          title: 'LocalStack Restarted',
-          description: `Services online: ${res.running_services.join(', ') || 'Ready'}`,
-          type: 'success',
-        });
-      }
-      await loadData();
-    } catch (err: any) {
-      toast({
-        title: 'Restart Failed',
-        description: err.message || 'Could not restart LocalStack container',
-        type: 'crit',
-      });
-    } finally {
-      setRestartingLocalstack(false);
-    }
-  };
-
   const handleForceApplyPendingUpdate = async () => {
     if (!pendingUpdate || !acknowledged) return;
     try {
@@ -182,7 +152,7 @@ export const ConnectionsView: React.FC = () => {
     }
     return (
       <span className="px-2 py-0.5 text-[11px] font-medium uppercase rounded bg-brand/20 text-brand border border-brand/30">
-        local
+        dev
       </span>
     );
   };
@@ -190,9 +160,6 @@ export const ConnectionsView: React.FC = () => {
   const getStatusDot = (status: string) => {
     if (status === 'connected') {
       return <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shrink-0" title="Connected & Verified" />;
-    }
-    if (status === 'restart_pending') {
-      return <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title="Restart Pending" />;
     }
     if (status === 'error') {
       return <span className="h-2.5 w-2.5 rounded-full bg-rose-500 shrink-0" title="Connection Error" />;
@@ -207,7 +174,7 @@ export const ConnectionsView: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold tracking-tight text-ink-primary">System & Cloud Connections</h1>
           <p className="text-xs text-ink-secondary">
-            Manage target cloud simulation, credential manager, service scopes (M-17), and persistent infrastructure engines
+            Manage AWS cloud targets, credential manager, service scopes, and persistent infrastructure engines
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -283,23 +250,6 @@ export const ConnectionsView: React.FC = () => {
                   </CardHeader>
 
                   <CardContent className="space-y-3 text-xs">
-                    {/* Restart Pending Alert Badge */}
-                    {conn.restart_pending && (
-                      <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-lg flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-amber-400 font-semibold text-xs">
-                          <AlertTriangle className="h-4 w-4 shrink-0" />
-                          <span>Restart pending</span>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          loading={restartingLocalstack}
-                          onClick={handleApplyRestart}
-                        >
-                          Apply & Restart
-                        </Button>
-                      </div>
-                    )}
 
                     {/* Services Chips */}
                     <div>

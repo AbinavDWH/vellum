@@ -215,10 +215,11 @@ def test_checkpoint_05_localstack_scope_toggle_restart_and_service_in_scope(clie
     assert patch_resp.json()["restart_pending"] is True
     assert "rds" not in patch_resp.json()["services"]
 
-    # 3. Simulate Apply & Restart
+    # 3. Apply restart endpoint reports failed (LocalStack removed) and clears restart_pending
     restart_resp = client.post("/api/localstack/restart")
     assert restart_resp.status_code == 200
-    assert restart_resp.json()["status"] == "restarted"
+    assert restart_resp.json()["status"] == "failed"
+    assert "failed" in restart_resp.json()["message"].lower()
 
     # Verify restart_pending is cleared
     db_session.refresh(conn)

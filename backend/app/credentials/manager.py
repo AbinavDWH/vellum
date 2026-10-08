@@ -238,14 +238,23 @@ class CredentialManager:
         try:
             if hasattr(db, "expire_all"):
                 db.expire_all()
+            norm_env = str(environment).strip().lower()
+            envs = [norm_env]
+            if norm_env in ["dev", "local"]:
+                envs = ["dev", "local"]
+            elif norm_env in ["stage", "staging"]:
+                envs = ["staging", "stage"]
+            elif norm_env in ["prod", "production"]:
+                envs = ["prod", "production"]
+
             conn = db.query(ConnectionRecord).filter(
-                ConnectionRecord.environment == environment,
+                ConnectionRecord.environment.in_(envs),
                 ConnectionRecord.is_deleted == False,
                 ConnectionRecord.status.in_(["connected", "active"])
             ).order_by(ConnectionRecord.updated_at.desc(), ConnectionRecord.created_at.desc()).first()
             if not conn:
                 conn = db.query(ConnectionRecord).filter(
-                    ConnectionRecord.environment == environment,
+                    ConnectionRecord.environment.in_(envs),
                     ConnectionRecord.is_deleted == False
                 ).order_by(ConnectionRecord.updated_at.desc(), ConnectionRecord.created_at.desc()).first()
             return conn
@@ -514,9 +523,9 @@ class CredentialManager:
         account_id = None
         arn = None
 
-        endpoint_url = os.getenv("LOCALSTACK_URL", "http://localhost:4566") if environment == "local" else None
-        ak = access_key or ("test" if environment == "local" else None)
-        sk = secret_key or ("test" if environment == "local" else None)
+        endpoint_url = None
+        ak = access_key
+        sk = secret_key
 
         session_kwargs = {"region_name": region}
         if ak and sk:
@@ -748,74 +757,30 @@ class CredentialManager:
         }
 
     def restart_localstack(self, db: Session) -> Dict[str, Any]:
-        """Apply & Restart LocalStack container and clear restart_pending."""
+        """Apply & Restart LocalStack container (deprecated: LocalStack removed)."""
         local_conns = db.query(ConnectionRecord).filter(
             ConnectionRecord.environment == "local",
             ConnectionRecord.is_deleted == False
         ).all()
 
-        docker_error = None
-        try:
-            subprocess.run(["docker", "restart", "vellum-localstack"], check=True, timeout=10, capture_output=True)
-        except Exception as e:
-            docker_error = str(e)
-            logger.warning("docker_restart_failed_or_simulated", error=docker_error)
-
-        running_services = []
-        try:
-            import httpx
-            for _ in range(5):
-                try:
-                    r = httpx.get("http://localhost:4566/_localstack/health", timeout=2.0)
-                    if r.status_code == 200:
-                        data = r.json()
-                        svc_map = data.get("services", {})
-                        running_services = [s for s, state in svc_map.items() if state in ["running", "available"]]
-                        if running_services or "services" in data:
-                            break
-                except Exception:
-                    pass
-                time.sleep(1)
-        except Exception:
-            pass
-
-        if not running_services:
-            for c in local_conns:
-                c.restart_pending = False
-                c.status = "error"
-            db.commit()
-
-            audit_logger.log(
-                event_type="LOCALSTACK_RESTART_FAILED",
-                risk_level="medium",
-                action_by="user",
-                details={"error": docker_error or "Health check unreachable", "running_services": []},
-                db=db,
-            )
-
-            return {
-                "status": "failed",
-                "running_services": [],
-                "message": f"LocalStack restart failed: Docker container is not running or health check failed.{' (' + docker_error + ')' if docker_error else ''}",
-            }
-
         for c in local_conns:
             c.restart_pending = False
-            c.status = "connected"
+            if c.status not in ["connected", "active"]:
+                c.status = "error"
         db.commit()
 
         audit_logger.log(
-            event_type="LOCALSTACK_RESTARTED",
-            risk_level="low",
+            event_type="LOCALSTACK_RESTART_FAILED",
+            risk_level="medium",
             action_by="user",
-            details={"running_services": running_services},
+            details={"error": "LocalStack has been removed from Vellum", "running_services": []},
             db=db,
         )
 
         return {
-            "status": "restarted",
-            "running_services": running_services,
-            "message": "LocalStack restarted successfully.",
+            "status": "failed",
+            "running_services": [],
+            "message": "Failed: LocalStack has been removed. Vellum operates exclusively with AWS Cloud environments.",
         }
 
     # ========================================================

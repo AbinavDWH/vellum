@@ -12,16 +12,12 @@ logger = structlog.get_logger(__name__)
 class VerificationEngine:
     """Verifies infrastructure state against desired Universal IR and detects drift."""
 
-    def __init__(self, localstack_url: Optional[str] = None):
-        self.endpoint_url = localstack_url or settings.LOCALSTACK_URL
+    def __init__(self, endpoint_url: Optional[str] = None):
+        self.endpoint_url = endpoint_url
 
     def is_localstack_online(self) -> bool:
-        try:
-            import httpx
-            r = httpx.get(f"{self.endpoint_url}/_localstack/health", timeout=2.0)
-            return r.status_code == 200
-        except Exception:
-            return False
+        """Deprecated: LocalStack removed. Returns False."""
+        return False
 
     def verify(
         self,
@@ -65,149 +61,104 @@ class VerificationEngine:
         if target.environment:
             environment = target.environment
             target_region = target.region
-            is_local = target.is_local
-            audited_account = target.account_id or ("000000000000" if is_local else None)
+            audited_account = target.account_id
             audited_label = target.target_label
             resolved_key = target.aws_access_key or aws_access_key
             resolved_secret = target.aws_secret_key or aws_secret_key
         else:
-            is_local = (environment == "local")
-            target_region = region or (cloud.get("region") if cloud else None) or settings.LOCALSTACK_REGION or "us-east-1"
-            audited_account = account_id or ("000000000000" if is_local else None)
-            audited_label = f"LocalStack • Account: 000000000000 • Region: {target_region}" if is_local else f"AWS Cloud ({environment.upper()}) • Account: {audited_account or 'unknown'} • Region: {target_region}"
-            resolved_key = aws_access_key
-            resolved_secret = aws_secret_key
-
-        if is_local:
-            localstack_online = self.is_localstack_online()
-
-            if not localstack_online:
-                logger.warning("LocalStack container offline on port 4566 during verification", plan_id=plan_id)
-                return {
-                    "plan_id": plan_id,
-                    "status": "failed",
-                    "drift_detected": False,
-                    "resources_verified": 0,
-                    "expected_resources": expected_names,
-                    "found_resources": [],
-                    "missing_resources": expected_names,
-                    "target_environment": environment,
-                    "audited_account_id": audited_account,
-                    "audited_region": target_region,
-                    "audited_target_label": audited_label,
-                    "audited_at": now_iso,
-                    "error_message": "LocalStack is offline on port 4566. Verification cannot connect to live environment.",
-                    "details": {
-                        "mode": "offline",
-                        "note": "LocalStack is offline. Please start LocalStack container before verifying."
-                    }
-                }
-
-            s3 = boto3.client(
-                "s3",
-                endpoint_url=self.endpoint_url,
-                aws_access_key_id="test",
-                aws_secret_access_key="test",
-                region_name=target_region,
-            )
-            ec2 = boto3.client(
-                "ec2",
-                endpoint_url=self.endpoint_url,
-                aws_access_key_id="test",
-                aws_secret_access_key="test",
-                region_name=target_region,
-            )
-            verify_mode = "live_localstack"
-        else:
-            # Real AWS Cloud verification (PROD / STAGING)
-            resolved_key = aws_access_key
-            resolved_secret = aws_secret_key
+            environment = environment or "dev"
+            target_region = region or (cloud.get("region") if cloud else None) or getattr(settings, "DEFAULT_AWS_REGION", "us-east-1") or "us-east-1"
             audited_account = account_id
+            audited_label = f"AWS Cloud ({environment.upper()}) • Account: {audited_account or 'unknown'} • Region: {target_region}"
+            resolved_key = aws_access_key
+            resolved_secret = aws_secret_key
+        is_local = False
 
-            if not resolved_key and db is not None:
-                try:
-                    from app.models import ConnectionRecord
-                    from app.credentials.manager import credential_manager
+        # Real AWS Cloud verification
+        if not resolved_key and db is not None:
+            try:
+                from app.models import ConnectionRecord
+                from app.credentials.manager import credential_manager
+                conn = (
+                    db.query(ConnectionRecord)
+                    .filter(
+                        ConnectionRecord.environment == environment,
+                        ConnectionRecord.is_deleted == False,
+                        ConnectionRecord.status.in_(["connected", "active"]),
+                    )
+                    .order_by(ConnectionRecord.updated_at.desc())
+                    .first()
+                )
+                if not conn:
                     conn = (
                         db.query(ConnectionRecord)
-                        .filter(
-                            ConnectionRecord.environment == environment,
-                            ConnectionRecord.is_deleted == False,
-                            ConnectionRecord.status.in_(["connected", "active"]),
-                        )
+                        .filter(ConnectionRecord.environment == environment, ConnectionRecord.is_deleted == False)
                         .order_by(ConnectionRecord.updated_at.desc())
                         .first()
                     )
-                    if not conn:
-                        conn = (
-                            db.query(ConnectionRecord)
-                            .filter(ConnectionRecord.environment == environment, ConnectionRecord.is_deleted == False)
-                            .order_by(ConnectionRecord.updated_at.desc())
-                            .first()
-                        )
-                    if conn and conn.encrypted_access_key and conn.encrypted_secret_key:
-                        resolved_key = credential_manager.decrypt(conn.encrypted_access_key)
-                        resolved_secret = credential_manager.decrypt(conn.encrypted_secret_key)
-                        if conn.account_id:
-                            audited_account = conn.account_id
-                        if conn.region:
-                            target_region = conn.region
-                except Exception as ex:
-                    logger.warning("Error resolving connection credentials for verification", error=str(ex))
+                if conn and conn.encrypted_access_key and conn.encrypted_secret_key:
+                    resolved_key = credential_manager.decrypt(conn.encrypted_access_key)
+                    resolved_secret = credential_manager.decrypt(conn.encrypted_secret_key)
+                    if conn.account_id:
+                        audited_account = conn.account_id
+                    if conn.region:
+                        target_region = conn.region
+            except Exception as ex:
+                logger.warning("Error resolving connection credentials for verification", error=str(ex))
 
-            # FAIL-CLOSED GUARD:
-            # If target is PROD/STAGING, verify MUST NOT talk to LocalStack or proceed with missing/test keys
-            if not resolved_key or resolved_key == "test":
-                logger.error("Fail-Closed: Attempted to audit PROD environment with missing or LocalStack credentials", plan_id=plan_id, environment=environment)
-                audit_logger.log(
-                    event_type="INCIDENT_TARGET_MISMATCH",
-                    plan_id=plan_id,
-                    risk_level="critical",
-                    action_by="verification_engine",
-                    details={
-                        "reason": f"Target environment is {environment.upper()}, but cloud credentials are missing or set to LocalStack test keys.",
-                        "target_environment": environment,
-                    },
-                    db=db,
-                )
-                return {
-                    "plan_id": plan_id,
-                    "status": "incident",
-                    "drift_detected": False,  # FAIL CLOSED: Refuse to report drift against empty/wrong target!
-                    "resources_verified": 0,
-                    "expected_resources": expected_names,
-                    "found_resources": [],
-                    "missing_resources": [],
+        # FAIL-CLOSED GUARD:
+        # Valid AWS cloud credentials must be configured
+        if not resolved_key or resolved_key == "test":
+            logger.error("Fail-Closed: Attempted to audit cloud environment without valid AWS credentials", plan_id=plan_id, environment=environment)
+            audit_logger.log(
+                event_type="INCIDENT_TARGET_MISMATCH",
+                plan_id=plan_id,
+                risk_level="critical",
+                action_by="verification_engine",
+                details={
+                    "reason": f"Target environment is {environment.upper()}, but cloud credentials are missing.",
                     "target_environment": environment,
-                    "audited_account_id": None,
-                    "audited_region": target_region,
-                    "audited_target_label": f"AWS Cloud ({environment.upper()}) [ABORTED: TARGET MISMATCH]",
-                    "audited_at": now_iso,
-                    "error_message": f"Verification halted: Target is {environment.upper()} but valid AWS credentials were not provided. Refusing to verify against LocalStack (Fail-Closed).",
-                    "details": {
-                        "mode": "fail_closed_incident",
-                        "incident": "INCIDENT_TARGET_MISMATCH",
-                        "reason": f"Cannot audit {environment.upper()} with missing or LocalStack credentials.",
-                    }
+                },
+                db=db,
+            )
+            return {
+                "plan_id": plan_id,
+                "status": "incident",
+                "drift_detected": False,  # FAIL CLOSED: Refuse to report drift against empty/wrong target!
+                "resources_verified": 0,
+                "expected_resources": expected_names,
+                "found_resources": [],
+                "missing_resources": [],
+                "target_environment": environment,
+                "audited_account_id": None,
+                "audited_region": target_region,
+                "audited_target_label": f"AWS Cloud ({environment.upper()}) [ABORTED: TARGET MISMATCH]",
+                "audited_at": now_iso,
+                "error_message": f"Verification halted: Target is {environment.upper()} but valid AWS credentials were not provided (Fail-Closed).",
+                "details": {
+                    "mode": "fail_closed_incident",
+                    "incident": "INCIDENT_TARGET_MISMATCH",
+                    "reason": f"Cannot audit {environment.upper()} with missing credentials.",
                 }
-
-            client_kwargs: Dict[str, Any] = {
-                "region_name": target_region,
-                "aws_access_key_id": resolved_key,
-                "aws_secret_access_key": resolved_secret,
             }
 
-            try:
-                sts = boto3.client("sts", **client_kwargs)
-                caller = sts.get_caller_identity()
-                audited_account = caller.get("Account", audited_account or "unknown")
-            except Exception as e:
-                logger.warning("Error getting STS caller identity during verification", error=str(e))
+        client_kwargs: Dict[str, Any] = {
+            "region_name": target_region,
+            "aws_access_key_id": resolved_key,
+            "aws_secret_access_key": resolved_secret,
+        }
 
-            audited_label = f"AWS Cloud ({environment.upper()}) • Account: {audited_account or 'unknown'} ({target_region})"
-            s3 = boto3.client("s3", **client_kwargs)
-            ec2 = boto3.client("ec2", **client_kwargs)
-            verify_mode = f"live_aws_{environment}"
+        try:
+            sts = boto3.client("sts", **client_kwargs)
+            caller = sts.get_caller_identity()
+            audited_account = caller.get("Account", audited_account or "unknown")
+        except Exception as e:
+            logger.warning("Error getting STS caller identity during verification", error=str(e))
+
+        audited_label = f"AWS Cloud ({environment.upper()}) • Account: {audited_account or 'unknown'} ({target_region})"
+        s3 = boto3.client("s3", **client_kwargs)
+        ec2 = boto3.client("ec2", **client_kwargs)
+        verify_mode = f"live_aws_{environment}"
 
         # Collect live S3 buckets
         live_buckets = []
@@ -257,9 +208,8 @@ class VerificationEngine:
         try:
             rds_kwargs = {
                 "region_name": target_region,
-                "endpoint_url": self.endpoint_url if is_local else None,
-                "aws_access_key_id": "test" if is_local else resolved_key,
-                "aws_secret_access_key": "test" if is_local else resolved_secret,
+                "aws_access_key_id": resolved_key,
+                "aws_secret_access_key": resolved_secret,
             }
             rds = boto3.client("rds", **rds_kwargs)
             rds_res = rds.describe_db_instances()
@@ -404,13 +354,7 @@ class VerificationEngine:
                     functional_green = db_status in ["available", "creating", "backing-up"]
                     diag_message = f"RDS instance state: '{db_status}'"
                 else:
-                    # In LocalStack simulation without RDS active container, treat as emulated if LocalStack ec2 is ok
-                    if is_local and len(live_vpcs) > 0:
-                        matched = True
-                        functional_green = True
-                        diag_message = "Simulated database instance verified in LocalStack"
-                    else:
-                        diag_message = f"Database instance '{ident}' not found"
+                    diag_message = f"Database instance '{ident}' not found"
 
             else:
                 matched = True

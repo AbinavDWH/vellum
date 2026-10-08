@@ -70,7 +70,16 @@ def sample_approved_plan():
     db.close()
 
 
-def test_health_endpoint(client):
+def test_health_endpoint(client, monkeypatch):
+    from app.llm.client import llm_client
+    monkeypatch.setattr(llm_client, "get_provider_status", lambda: {
+        "active_provider": "local",
+        "active_model": "test-model",
+        "active_online": True,
+        "lm_studio_online": True,
+        "groq_online": False,
+        "routing_mode": "manual",
+    })
     res = client.get("/api/health")
     assert res.status_code == 200
     data = res.json()
@@ -104,20 +113,41 @@ def test_plans_list_and_details(client, sample_approved_plan):
 
 
 def test_websocket_execution_and_replay(client, sample_approved_plan):
+    from unittest.mock import patch
+    from app.target import TargetResolution
+    from app.engines.execution_engine import execution_engine
+
+    mock_target = TargetResolution(
+        environment="dev",
+        provider="aws",
+        region="us-east-1",
+        connection_id="conn_ws_test",
+        account_id="123456789012",
+        aws_access_key="AKIAEXAMPLE",
+        aws_secret_key="SECRETEXAMPLE",
+        is_local=False,
+        target_label="AWS Cloud (DEV)",
+    )
+
+    from app.engines.verification_engine import verification_engine
+
     # 1. Connect to live WebSocket stream
     received_logs = []
     completed_msg = None
 
-    with client.websocket_connect(f"/ws/execution/{sample_approved_plan}") as ws:
-        while True:
-            text = ws.receive_text()
-            if text.startswith("__COMPLETED__"):
-                completed_msg = text
-                break
-            elif text.startswith("__ERROR__"):
-                pytest.fail(f"WebSocket execution reported error: {text}")
-            else:
-                received_logs.append(text)
+    with patch("app.target.resolve_target", return_value=mock_target), \
+         patch.object(verification_engine, "verify", return_value={"status": "success", "drift_detected": False, "resources_verified": 1, "missing_resources": []}), \
+         patch.object(execution_engine, "_run_streaming_command", return_value=(0, "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", False)):
+        with client.websocket_connect(f"/ws/execution/{sample_approved_plan}") as ws:
+            while True:
+                text = ws.receive_text()
+                if text.startswith("__COMPLETED__"):
+                    completed_msg = text
+                    break
+                elif text.startswith("__ERROR__"):
+                    pytest.fail(f"WebSocket execution reported error: {text}")
+                else:
+                    received_logs.append(text)
 
     assert len(received_logs) > 0
     assert completed_msg is not None

@@ -64,7 +64,7 @@ class TerraformGenerator:
         mapped = adapter.map_resources(ir_dict)
 
         # 2. Generate HCL
-        region = target.region or cloud.get("region") or settings.LOCALSTACK_REGION or "us-east-1"
+        region = target.region or cloud.get("region") or getattr(settings, "DEFAULT_AWS_REGION", "us-east-1") or "us-east-1"
         if provider == "aws":
             hcl_content = adapter.generate_terraform(mapped, environment=environment, region=region)
         else:

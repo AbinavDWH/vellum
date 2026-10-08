@@ -21,9 +21,10 @@ def test_terraform_generation():
     # Check file exists
     assert (Path(plan_dir) / "main.tf").exists()
 
-    # Check LocalStack endpoint is in the file
+    # Verify standard AWS Cloud provider configuration (no LocalStack endpoint overrides)
     content = (Path(plan_dir) / "main.tf").read_text()
-    assert "localhost:4566" in content
+    assert 'provider "aws"' in content
+    assert "localhost:4566" not in content
     assert "aws_vpc" in content
     assert "aws_s3_bucket" in content
     assert "Vellum" in content

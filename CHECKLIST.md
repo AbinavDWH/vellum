@@ -21,8 +21,8 @@
 ---
 
 ### Layer 7: Execution & Provisioning Veracity
-- [x] **Layer 7: Resources actually exist in LocalStack after execution**
-  - `ExecutionEngine` provisions infrastructure resources to LocalStack via Terraform apply and fallback boto3 calls.
+- [x] **Layer 7: Resources actually exist in AWS Cloud environment after execution**
+  - `ExecutionEngine` provisions infrastructure resources to AWS Cloud via Terraform apply with fail-closed credential validation.
   - `VerificationEngine` queries live AWS APIs (`boto3.client('s3')`, `boto3.client('ec2')`) to confirm resources exist.
   - Automated test: `test_layer_7_resources_exist_in_localstack` in `backend/tests/test_quality_layers.py`.
 - [x] **Layer 7: PostgreSQL tables are created with correct schema**

@@ -130,21 +130,22 @@ def test_m19_three_leg_verification_pass(db_session):
 
         mock_boto.side_effect = boto_client_side_effect
 
-        with patch.object(verification_engine, "is_localstack_online", return_value=True):
-            report = verification_engine.verify(
-                plan_id=plan_id,
-                expected_ir=ir_dict,
-                environment="local",
-                db=db_session,
-            )
+        report = verification_engine.verify(
+            plan_id=plan_id,
+            expected_ir=ir_dict,
+            environment="dev",
+            aws_access_key="test_key",
+            aws_secret_key="test_secret",
+            db=db_session,
+        )
 
-            assert report["status"] == "success"
-            assert "three_leg" in report
-            three_leg = report["three_leg"]
-            assert three_leg["all_legs_agreed"] is True
-            assert three_leg["overall_status"] == "pass"
-            assert three_leg["zombie_events_detected"] is False
-            assert three_leg["orphan_resources_detected"] is False
+        assert report["status"] == "success"
+        assert "three_leg" in report
+        three_leg = report["three_leg"]
+        assert three_leg["all_legs_agreed"] is True
+        assert three_leg["overall_status"] == "pass"
+        assert three_leg["zombie_events_detected"] is False
+        assert three_leg["orphan_resources_detected"] is False
 
 
 def test_m19_three_leg_verification_orphan_and_zombies(db_session):

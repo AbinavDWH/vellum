@@ -2,7 +2,7 @@
 
 > **Autonomous NLP-driven Cloud Infrastructure & Database Architecture Engine**  
 > **LLM Runtime:** LM Studio (Local Inference)  
-> **Target Environment:** AWS (LocalStack Simulation & Live Cloud) + PostgreSQL  
+> **Target Environment:** AWS Cloud (Development, Staging, Production) + PostgreSQL  
 > **Status:** Production-Ready Phase 1 Architecture
 
 ---
@@ -32,7 +32,7 @@
 │                         │                              │
 │                         ▼                              │
 │  5. Terraform HCL & SQL DDL Generation                 │
-│     → Generates main.tf (LocalStack) & schema.sql      │
+│     → Generates main.tf (AWS Cloud) & schema.sql       │
 │                         │                              │
 │                         ▼                              │
 │  6. Execution & Live Streaming Engine                  │
@@ -56,16 +56,16 @@
 3. **Human-in-the-Loop Approval Gate**:
    - Categorizes risk: `LOW` 🟢, `MEDIUM` 🟡, `HIGH` 🟠, `CRITICAL` 🔴.
    - For destructive/critical actions, requires operator typing confirmation phrase before execution.
-4. **AWS Adapter for LocalStack**:
-   - Generates compliant Terraform HCL configured with LocalStack endpoints.
+4. **Native AWS Cloud Adapter**:
+   - Generates compliant Terraform HCL targeting AWS Cloud environments (`dev`, `staging`, `prod`).
    - Tags all resources with `ManagedBy = "Vellum"`.
 5. **PostgreSQL Relational Automation**:
    - Generates clean SQL DDL with primary keys, foreign key constraints, indexes, and extensions.
 6. **Execution Engine & WebSocket Live Stream**:
-   - Runs Terraform apply or direct AWS API provisioning.
+   - Runs Terraform apply with fail-closed credential validation.
    - Live streaming terminal output via WebSockets.
 7. **Verification & Drift Detection Engine**:
-   - Compares desired state from Universal IR against actual deployed state in LocalStack.
+   - Compares desired state from Universal IR against actual deployed state in AWS Cloud.
 8. **Immutable Audit Trail**:
    - Cryptographic SHA-256 hash calculation for every event, payload, and approval decision.
 9. **Modern Glassmorphic React UI**:
@@ -80,7 +80,7 @@
 - **Node.js 18+** & **npm**
 - **LM Studio** running locally at `http://localhost:1234/v1`
 - **Terraform 1.5+** (Installed in `~/.local/bin/terraform`)
-- **Docker** (Optional, for running LocalStack container)
+- **AWS Credentials** configured via Vellum Connections Manager (Development, Staging, Production)
 
 ### 2. Setup Virtual Environment & Dependencies
 
@@ -128,7 +128,7 @@ Open **[http://localhost:3000](http://localhost:3000)**.
 
 ## 🧪 Verification Checkpoints & Test Suite
 
-All 7 module test suites pass verification against live LM Studio:
+All test suites pass verification:
 
 ```bash
 PYTHONPATH=backend .venv/bin/pytest backend/tests/ -v
@@ -139,8 +139,8 @@ PYTHONPATH=backend .venv/bin/pytest backend/tests/ -v
 | **Module 1** | `test_module_1_lm_studio.py` | ✅ PASSED | LM Studio Chat & JSON Schema inference |
 | **Module 2** | `test_module_2_ir_generation.py` | ✅ PASSED | Natural Language to Universal IR parsing |
 | **Module 3** | `test_module_3_approval.py` | ✅ PASSED | Human-in-the-Loop approval gate blocking |
-| **Module 4** | `test_module_4_terraform.py` | ✅ PASSED | AWS LocalStack Terraform HCL generation |
-| **Module 5** | `test_module_5_execution.py` | ✅ PASSED | Execution engine against LocalStack / simulation |
+| **Module 4** | `test_module_4_terraform.py` | ✅ PASSED | AWS Cloud Terraform HCL generation |
+| **Module 5** | `test_module_5_execution.py` | ✅ PASSED | Execution engine with fail-closed credential validation |
 | **Module 6** | `test_module_6_verification.py` | ✅ PASSED | State verification & drift detection |
 | **Module 7** | `test_module_7_e2e.py` | ✅ PASSED | Complete end-to-end autonomous pipeline |
 | **Module 8** | `frontend/` | ✅ PASSED | React + TypeScript + Tailwind UI integration |
@@ -169,7 +169,7 @@ vellum/
 │   │   ├── engines/
 │   │   │   ├── orchestrator.py        # Autonomous orchestrator pipeline
 │   │   │   ├── terraform_generator.py # AWS Terraform HCL generator
-│   │   │   ├── execution_engine.py    # LocalStack apply & execution runner
+│   │   │   ├── execution_engine.py    # AWS Cloud apply & execution runner
 │   │   │   └── verification_engine.py # State verification & drift detection
 │   │   ├── approval/
 │   │   │   ├── engine.py              # Approval state machine & preview formatter
@@ -177,7 +177,7 @@ vellum/
 │   │   ├── adapters/
 │   │   │   ├── cloud/
 │   │   │   │   ├── base.py            # Abstract cloud provider adapter
-│   │   │   │   ├── aws.py             # AWS (Active, LocalStack-ready)
+│   │   │   │   ├── aws.py             # AWS (Native Cloud: dev, staging, prod)
 │   │   │   │   └── azure.py           # Azure (Architecture Ready)
 │   │   │   └── database/
 │   │   │       ├── base.py            # Abstract DB adapter
@@ -187,7 +187,7 @@ vellum/
 │   │   │   ├── security.py            # Security audit benchmark (CIS/IAM/Network)
 │   │   │   └── policy.py              # Risk classification & confirmation phrases
 │   │   ├── credentials/
-│   │   │   └── manager.py             # LLM credential isolation manager
+│   │   │   └── manager.py             # Cloud credential management & isolation
 │   │   └── audit/
 │   │       └── logger.py              # Immutable SHA-256 audit logger
 │   ├── tests/                         # All Verification Checkpoint tests
@@ -212,8 +212,7 @@ vellum/
 │   └── Dockerfile
 ├── terraform-workspace/               # Isolated per-plan Terraform workspaces
 ├── scripts/
-│   ├── setup.sh                       # One-click bootstrap script
-│   └── localstack-init.sh             # LocalStack init script
+│   └── setup.sh                       # One-click bootstrap script
 ├── docker-compose.yml
 ├── .env
 ├── PLAN.md

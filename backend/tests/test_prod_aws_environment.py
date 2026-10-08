@@ -30,12 +30,13 @@ def test_aws_adapter_prod_vs_local_terraform():
         }
     ]
 
-    # 1. Local environment
+    # 1. Local environment (now emits clean AWS provider without LocalStack overrides)
     local_tf = adapter.generate_terraform(mapped, environment="local")
-    assert 'access_key                  = "test"' in local_tf
-    assert 'secret_key                  = "test"' in local_tf
-    assert "endpoints {" in local_tf
-    assert "s3_use_path_style           = true" in local_tf
+    assert 'provider "aws"' in local_tf
+    assert "access_key" not in local_tf
+    assert "secret_key" not in local_tf
+    assert "endpoints {" not in local_tf
+    assert "localhost:4566" not in local_tf
 
     # 2. Production environment
     prod_tf = adapter.generate_terraform(mapped, environment="prod", region="us-west-2")
@@ -99,15 +100,11 @@ def test_execution_engine_prod_no_localstack_simulation(setup_db, monkeypatch):
     # Mock terraform execution so we don't actually deploy live AWS resources in test
     captured_logs = []
 
-    def mock_subprocess_run(cmd, *args, **kwargs):
-        class Result:
-            returncode = 0
-            stdout = "Apply complete! Resources: 1 added, 0 changed, 0 destroyed."
-            stderr = ""
-        return Result()
-
-    import subprocess
-    monkeypatch.setattr(subprocess, "run", mock_subprocess_run)
+    monkeypatch.setattr(
+        execution_engine,
+        "_run_streaming_command",
+        lambda *args, **kwargs: (0, "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", False),
+    )
 
     # Create dummy workspace with main.tf
     ws_dir = f"/tmp/vellum_test_workspace/{plan_id}"
@@ -125,7 +122,19 @@ def test_execution_engine_prod_no_localstack_simulation(setup_db, monkeypatch):
         terraform_code='resource "aws_s3_bucket" "test_prod" { bucket = "my-prod-test-bucket" }',
     )
     db.add(plan)
-    db.commit()
+    from app.target import TargetResolution
+    mock_target = TargetResolution(
+        environment="prod",
+        provider="aws",
+        region="us-east-1",
+        connection_id="conn_prod_mock",
+        account_id="123456789012",
+        aws_access_key="AKIAEXAMPLE",
+        aws_secret_key="SECRETEXAMPLE",
+        is_local=False,
+        target_label="AWS Cloud (PROD) • Account: 123456789012 • Region: us-east-1",
+    )
+    monkeypatch.setattr("app.target.resolve_target", lambda **kw: mock_target)
 
     exec_res = execution_engine.execute_plan(
         plan_dir=ws_dir,

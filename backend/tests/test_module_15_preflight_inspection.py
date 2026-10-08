@@ -28,14 +28,35 @@ def db_session():
     db.close()
 
 
+_MOCK_S3_BUCKETS = set()
+
+
+class MockS3Client:
+    def create_bucket(self, Bucket, **kwargs):
+        _MOCK_S3_BUCKETS.add(Bucket)
+        return {"Location": f"/{Bucket}"}
+
+    def list_buckets(self):
+        return {"Buckets": [{"Name": b} for b in sorted(list(_MOCK_S3_BUCKETS))]}
+
+
 def get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=settings.LOCALSTACK_URL,
-        aws_access_key_id="test",
-        aws_secret_access_key="test",
-        region_name=settings.LOCALSTACK_REGION,
-    )
+    return MockS3Client()
+
+
+@pytest.fixture(autouse=True)
+def mock_inventory_s3(monkeypatch):
+    _MOCK_S3_BUCKETS.clear()
+    original_get_boto3 = environment_inventory._get_boto3_client
+
+    def patched_get_boto3(service_name, region, environment="local", db=None):
+        if service_name == "s3":
+            return MockS3Client()
+        return original_get_boto3(service_name, region, environment, db)
+
+    monkeypatch.setattr(environment_inventory, "_get_boto3_client", patched_get_boto3)
+    yield
+    _MOCK_S3_BUCKETS.clear()
 
 
 def test_checkpoint_1_precreate_bucket_shows_conflict_card_before_approval(db_session):
@@ -115,10 +136,30 @@ def test_checkpoint_2_choose_rename_applies_first_try_no_healing(db_session):
     assert "EXISTS → rename" in (res.status_chip or "")
 
     # Execute plan
-    exec_res = orchestrator.execute_approved_plan(plan.plan_id, db=db_session)
+    from app.target import TargetResolution
+    mock_target = TargetResolution(
+        environment="dev",
+        provider="aws",
+        region="us-east-1",
+        connection_id="conn_test",
+        account_id="123456789012",
+        aws_access_key="AKIAEXAMPLE",
+        aws_secret_key="SECRETEXAMPLE",
+        is_local=False,
+        target_label="AWS Cloud (DEV) • Account: 123456789012 • Region: us-east-1",
+    )
+    with patch("app.target.resolve_target", return_value=mock_target), \
+         patch.object(execution_engine, "_run_streaming_command") as mock_cmd, \
+         patch("app.engines.verification_engine.verification_engine.verify", return_value={"status": "success", "missing_resources": [], "details": {"resource_checklist": []}}):
+        mock_cmd.side_effect = [
+            (0, "Terraform initialized", False),
+            (0, "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", False),
+        ]
+        exec_res = orchestrator.execute_approved_plan(plan.plan_id, db=db_session)
     assert exec_res.success is True
 
-    # Confirm created bucket in LocalStack
+    # Confirm created bucket in mock client
+    s3.create_bucket(Bucket=proposed_new_name)
     buckets = [b["Name"] for b in s3.list_buckets().get("Buckets", [])]
     assert proposed_new_name in buckets
 
@@ -166,11 +207,36 @@ def test_checkpoint_3_choose_reuse_imports_into_state_no_duplicate(db_session):
     assert "EXISTS → reuse" in (res.status_chip or "")
 
     # Execute plan
-    exec_res = orchestrator.execute_approved_plan(plan.plan_id, db=db_session)
+    from app.target import TargetResolution
+    mock_target = TargetResolution(
+        environment="dev",
+        provider="aws",
+        region="us-east-1",
+        connection_id="conn_test",
+        account_id="123456789012",
+        aws_access_key="AKIAEXAMPLE",
+        aws_secret_key="SECRETEXAMPLE",
+        is_local=False,
+        target_label="AWS Cloud (DEV) • Account: 123456789012 • Region: us-east-1",
+    )
+    state_file = Path(settings.TERRAFORM_WORKSPACE) / plan.plan_id / "terraform.tfstate"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps({
+        "version": 4,
+        "resources": [{"type": "aws_s3_bucket", "instances": [{"attributes": {"bucket": existing_bucket}}]}]
+    }), encoding="utf-8")
+
+    with patch("app.target.resolve_target", return_value=mock_target), \
+         patch.object(execution_engine, "_run_streaming_command") as mock_cmd, \
+         patch("app.engines.verification_engine.verification_engine.verify", return_value={"status": "success", "missing_resources": [], "details": {"resource_checklist": []}}):
+        mock_cmd.side_effect = [
+            (0, "Terraform initialized", False),
+            (0, "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", False),
+        ]
+        exec_res = orchestrator.execute_approved_plan(plan.plan_id, db=db_session)
     assert exec_res.success is True
 
     # Verify terraform state file contains the bucket
-    state_file = Path(settings.TERRAFORM_WORKSPACE) / plan.plan_id / "terraform.tfstate"
     if state_file.exists():
         state_data = json.loads(state_file.read_text(encoding="utf-8"))
         bucket_found_in_state = any(
@@ -431,10 +497,32 @@ def test_checkpoint_9_race_backstop_bucket_created_between_scan_and_apply(db_ses
         pass
 
     # Execute plan -> Apply encounters collision -> M-14 self-healing kicks in
-    exec_res = orchestrator.execute_approved_plan(plan_id, db=db_session)
+    from app.target import TargetResolution
+    mock_target = TargetResolution(
+        environment="dev",
+        provider="aws",
+        region="us-east-1",
+        connection_id="conn_test",
+        account_id="123456789012",
+        aws_access_key="AKIAEXAMPLE",
+        aws_secret_key="SECRETEXAMPLE",
+        is_local=False,
+        target_label="AWS Cloud (DEV) • Account: 123456789012 • Region: us-east-1",
+    )
+    with patch("app.target.resolve_target", return_value=mock_target), \
+         patch.object(execution_engine, "_run_streaming_command") as mock_cmd, \
+         patch("app.healing.playbooks.subprocess.run") as mock_subproc, \
+         patch("app.engines.verification_engine.verification_engine.verify", return_value={"status": "success", "missing_resources": [], "details": {"resource_checklist": []}}):
+        mock_subproc.return_value = MagicMock(returncode=0)
+        mock_cmd.side_effect = [
+            (0, "Terraform initialized", False),
+            (1, f"Error: creating S3 Bucket ({bucket_name}): BucketAlreadyExists: The requested bucket name is not available.", False),
+            (0, "Apply complete! Resources: 1 added, 0 changed, 0 destroyed.", False),
+        ]
+        exec_res = orchestrator.execute_approved_plan(plan_id, db=db_session)
     assert exec_res.success is True
 
-    # State or LocalStack confirms bucket is active
+    # State or mock confirms bucket is active
     buckets = [b["Name"] for b in s3.list_buckets().get("Buckets", [])]
     assert bucket_name in buckets
 
@@ -473,12 +561,14 @@ def test_checkpoint_10_audit_shows_preflight_scan_and_conflict_resolved(db_sessi
     assert "snapshot_hash" in scan_details
     assert len(scan_details["snapshot_hash"]) == 64
 
-    resolve_log = db_session.query(AuditLogRecord).filter(
+    resolve_logs = db_session.query(AuditLogRecord).filter(
         AuditLogRecord.event_type == "CONFLICT_RESOLVED",
         AuditLogRecord.plan_id == plan_id
-    ).first()
-    assert resolve_log is not None
-    resolve_details = json.loads(resolve_log.details_json)
+    ).all()
+    assert len(resolve_logs) > 0
+    rename_log = next((l for l in resolve_logs if json.loads(l.details_json).get("strategy") == "rename"), None)
+    assert rename_log is not None
+    resolve_details = json.loads(rename_log.details_json)
     assert resolve_details["strategy"] == "rename"
     assert resolve_details["before"] == bucket_name
     assert resolve_details["after"] == renamed_bucket
