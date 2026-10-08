@@ -346,12 +346,24 @@ class EnvironmentInventoryService:
         # Workspace state cross-check
         managed_resources = self._scan_terraform_workspace_state()
 
+        # Check if environment is unavailable
+        is_unavailable = False
+        if environment == "local":
+            try:
+                import httpx
+                r = httpx.get(f"{settings.LOCALSTACK_URL}/_localstack/health", timeout=1.5)
+                if r.status_code != 200:
+                    is_unavailable = True
+            except Exception:
+                is_unavailable = True
+
         snapshot = EnvironmentSnapshot(
             snapshot_id=f"snap_{uuid.uuid4().hex[:8]}",
             provider=provider,
             region=region,
             timestamp=now,
             ttl_seconds=int(self.CACHE_TTL_SECONDS),
+            unavailable=is_unavailable,
             buckets=buckets,
             vpcs=vpcs,
             subnets=subnets,

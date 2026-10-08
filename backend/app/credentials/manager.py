@@ -46,6 +46,9 @@ class CredentialManager:
         "internet_gateway": "vpc",
         "route_table": "vpc",
         "nat_gateway": "vpc",
+        "elastic_ip": "vpc",
+        "eip": "vpc",
+        "aws_eip": "vpc",
         "managed_database": "rds",
         "compute_instance": "ec2",
         "object_storage": "s3",
@@ -527,8 +530,8 @@ class CredentialManager:
         try:
             sts_client = boto_session.client("sts", endpoint_url=endpoint_url, region_name=region)
             caller_ident = sts_client.get_caller_identity()
-            account_id = caller_ident.get("Account", "000000000000")
-            arn = caller_ident.get("Arn", "arn:aws:iam::000000000000:root")
+            account_id = caller_ident.get("Account")
+            arn = caller_ident.get("Arn")
             latency = round((time.perf_counter() - start_sts) * 1000, 2)
             if "sts" in services:
                 probe_results.append({"service": "sts", "status": "ok", "latency_ms": latency})
@@ -577,9 +580,16 @@ class CredentialManager:
         any_ok = any(p["status"] == "ok" for p in probe_results)
         overall = "ok" if all_ok and account_id else ("partial" if any_ok or account_id else "error")
 
+        if overall == "error" or not account_id:
+            reported_account_id = None
+            reported_arn = None
+        else:
+            reported_account_id = account_id
+            reported_arn = arn
+
         return {
-            "account_id": account_id or "000000000000",
-            "arn": arn or "arn:aws:iam::000000000000:root",
+            "account_id": reported_account_id,
+            "arn": reported_arn,
             "services": probe_results,
             "overall_status": overall,
         }
@@ -743,32 +753,56 @@ class CredentialManager:
             ConnectionRecord.environment == "local",
             ConnectionRecord.is_deleted == False
         ).all()
-        for c in local_conns:
-            c.restart_pending = False
-            c.status = "connected"
-        db.commit()
 
+        docker_error = None
         try:
-            subprocess.run(["docker", "restart", "vellum-localstack"], check=True, timeout=30, capture_output=True)
+            subprocess.run(["docker", "restart", "vellum-localstack"], check=True, timeout=10, capture_output=True)
         except Exception as e:
-            logger.warning("docker_restart_failed_or_simulated", error=str(e))
+            docker_error = str(e)
+            logger.warning("docker_restart_failed_or_simulated", error=docker_error)
 
         running_services = []
         try:
             import httpx
-            for _ in range(15):
-                time.sleep(1)
+            for _ in range(5):
                 try:
-                    r = httpx.get("http://localhost:4566/_localstack/health", timeout=3.0)
+                    r = httpx.get("http://localhost:4566/_localstack/health", timeout=2.0)
                     if r.status_code == 200:
                         data = r.json()
                         svc_map = data.get("services", {})
                         running_services = [s for s, state in svc_map.items() if state in ["running", "available"]]
-                        break
+                        if running_services or "services" in data:
+                            break
                 except Exception:
                     pass
+                time.sleep(1)
         except Exception:
             pass
+
+        if not running_services:
+            for c in local_conns:
+                c.restart_pending = False
+                c.status = "error"
+            db.commit()
+
+            audit_logger.log(
+                event_type="LOCALSTACK_RESTART_FAILED",
+                risk_level="medium",
+                action_by="user",
+                details={"error": docker_error or "Health check unreachable", "running_services": []},
+                db=db,
+            )
+
+            return {
+                "status": "failed",
+                "running_services": [],
+                "message": f"LocalStack restart failed: Docker container is not running or health check failed.{' (' + docker_error + ')' if docker_error else ''}",
+            }
+
+        for c in local_conns:
+            c.restart_pending = False
+            c.status = "connected"
+        db.commit()
 
         audit_logger.log(
             event_type="LOCALSTACK_RESTARTED",

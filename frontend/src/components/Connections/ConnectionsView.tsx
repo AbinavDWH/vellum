@@ -118,11 +118,19 @@ export const ConnectionsView: React.FC = () => {
     setRestartingLocalstack(true);
     try {
       const res = await api.restartLocalStack();
-      toast({
-        title: 'LocalStack Restarted',
-        description: `Services online: ${res.running_services.join(', ') || 'Ready'}`,
-        type: 'success',
-      });
+      if (res.status === 'failed' || res.status === 'error') {
+        toast({
+          title: 'LocalStack Restart Failed',
+          description: res.message || 'Could not restart LocalStack container',
+          type: 'crit',
+        });
+      } else {
+        toast({
+          title: 'LocalStack Restarted',
+          description: `Services online: ${res.running_services.join(', ') || 'Ready'}`,
+          type: 'success',
+        });
+      }
       await loadData();
     } catch (err: any) {
       toast({

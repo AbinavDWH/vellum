@@ -437,6 +437,10 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
         })
         .catch((e) => {
           if (isCancelled) return;
+          if (e.message?.includes('already currently executing') || e.message?.includes('409')) {
+            // Execution is already active on the server, attach silently
+            return;
+          }
           setLogs((prev) => [...prev, `[ERROR] [REST Fallback Error]: ${e.message}`]);
           setErrorMessage(e.message);
           setExecuting(false);

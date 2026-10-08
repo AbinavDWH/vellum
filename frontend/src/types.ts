@@ -129,6 +129,7 @@ export interface EnvironmentSnapshot {
   timestamp: number;
   age_seconds?: number;
   is_stale?: boolean;
+  unavailable?: boolean;
   counts: {
     buckets: number;
     vpcs: number;
@@ -429,8 +430,8 @@ export interface ServiceProbeResult {
 }
 
 export interface ConnectionTestResult {
-  account_id: string;
-  arn: string;
+  account_id?: string | null;
+  arn?: string | null;
   services: ServiceProbeResult[];
   overall_status: 'ok' | 'partial' | 'error';
 }

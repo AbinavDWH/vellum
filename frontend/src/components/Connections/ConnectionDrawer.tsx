@@ -593,12 +593,12 @@ export const ConnectionDrawer: React.FC<ConnectionDrawerProps> = ({
               <div className="space-y-2 pt-2 border-t border-line text-xs">
                 <div className="flex items-center justify-between text-ink-secondary">
                   <span>STS Account ID:</span>
-                  <span className="font-mono text-ink-primary">{testResult.account_id}</span>
+                  <span className="font-mono text-ink-primary">{testResult.account_id || 'Unverified'}</span>
                 </div>
                 <div className="flex items-center justify-between text-ink-secondary">
                   <span>Caller ARN:</span>
-                  <span className="font-mono text-ink-primary truncate max-w-[280px]" title={testResult.arn}>
-                    {testResult.arn}
+                  <span className="font-mono text-ink-primary truncate max-w-[280px]" title={testResult.arn || 'Unverified'}>
+                    {testResult.arn || 'Unverified'}
                   </span>
                 </div>
 

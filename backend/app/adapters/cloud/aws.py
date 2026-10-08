@@ -18,6 +18,9 @@ class AWSAdapter(CloudProviderAdapter):
         "sg": "aws_security_group",
         "internet_gateway": "aws_internet_gateway",
         "nat_gateway": "aws_nat_gateway",
+        "eip": "aws_eip",
+        "elastic_ip": "aws_eip",
+        "aws_eip": "aws_eip",
         "route_table": "aws_route_table",
         "route": "aws_route",
         "aws_route": "aws_route",
@@ -55,6 +58,17 @@ class AWSAdapter(CloudProviderAdapter):
         "static_site": "aws_s3_bucket",
         "website_hosting": "aws_s3_bucket",
         "website": "aws_s3_bucket",
+        "bucket_versioning": "aws_s3_bucket_versioning",
+        "aws_bucket_versioning": "aws_s3_bucket_versioning",
+        "aws_s3_bucket_versioning": "aws_s3_bucket_versioning",
+        "bucket_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "aws_bucket_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "aws_s3_bucket_server_side_encryption_configuration": "aws_s3_bucket_server_side_encryption_configuration",
+        "bucket_public_access_block": "aws_s3_bucket_public_access_block",
+        "aws_bucket_public_access_block": "aws_s3_bucket_public_access_block",
+        "aws_s3_bucket_public_access_block": "aws_s3_bucket_public_access_block",
+        "aws_s3_bucket_website_configuration": "aws_s3_bucket_website_configuration",
+        "aws_s3_bucket_policy": "aws_s3_bucket_policy",
 
         # Compute
         "compute_instance": "aws_instance",
@@ -286,6 +300,21 @@ provider "aws" {{
                         "tags": {},
                     })
 
+        # 5. Ensure NAT Gateway has an Elastic IP if not explicitly mapped
+        nat_gateways = [r for r in mapped_resources if r["tf_type"] == "aws_nat_gateway"]
+        eips = [r for r in mapped_resources if r["tf_type"] == "aws_eip"]
+        if nat_gateways and not eips:
+            for ng in nat_gateways:
+                eip_name = f"{ng['name']}_eip"
+                mapped_resources.insert(0, {
+                    "universal_type": "elastic_ip",
+                    "tf_type": "aws_eip",
+                    "name": eip_name,
+                    "properties": {},
+                    "depends_on": [],
+                    "tags": {},
+                })
+
         for res in mapped_resources:
             tf_type = res["tf_type"]
             name = res["name"]
@@ -462,6 +491,55 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 }}
 """
                 blocks.append(bucket_block)
+
+            elif tf_type == "aws_s3_bucket_versioning":
+                bucket_ref_name = props.get("bucket_name") or props.get("bucket")
+                if not bucket_ref_name:
+                    matching_b = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_s3_bucket"), None)
+                    bucket_ref_name = matching_b
+                b_ref = f"aws_s3_bucket.{bucket_ref_name}.id" if bucket_ref_name and not str(bucket_ref_name).startswith("arn:") else (f'"{bucket_ref_name}"' if bucket_ref_name else "aws_s3_bucket.main.id")
+                status = props.get("status", "Enabled")
+                blocks.append(f"""resource "aws_s3_bucket_versioning" "{name}" {{
+  bucket = {b_ref}
+  versioning_configuration {{
+    status = "{status}"
+  }}
+}}
+""")
+
+            elif tf_type == "aws_s3_bucket_server_side_encryption_configuration":
+                bucket_ref_name = props.get("bucket_name") or props.get("bucket")
+                if not bucket_ref_name:
+                    matching_b = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_s3_bucket"), None)
+                    bucket_ref_name = matching_b
+                b_ref = f"aws_s3_bucket.{bucket_ref_name}.id" if bucket_ref_name and not str(bucket_ref_name).startswith("arn:") else (f'"{bucket_ref_name}"' if bucket_ref_name else "aws_s3_bucket.main.id")
+                sse_algo = props.get("sse_algorithm", "AES256")
+                blocks.append(f"""resource "aws_s3_bucket_server_side_encryption_configuration" "{name}" {{
+  bucket = {b_ref}
+
+  rule {{
+    apply_server_side_encryption_by_default {{
+      sse_algorithm = "{sse_algo}"
+    }}
+  }}
+}}
+""")
+
+            elif tf_type == "aws_s3_bucket_public_access_block":
+                bucket_ref_name = props.get("bucket_name") or props.get("bucket")
+                if not bucket_ref_name:
+                    matching_b = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_s3_bucket"), None)
+                    bucket_ref_name = matching_b
+                b_ref = f"aws_s3_bucket.{bucket_ref_name}.id" if bucket_ref_name and not str(bucket_ref_name).startswith("arn:") else (f'"{bucket_ref_name}"' if bucket_ref_name else "aws_s3_bucket.main.id")
+                blocks.append(f"""resource "aws_s3_bucket_public_access_block" "{name}" {{
+  bucket = {b_ref}
+
+  block_public_acls       = {str(props.get('block_public_acls', True)).lower()}
+  block_public_policy     = {str(props.get('block_public_policy', True)).lower()}
+  ignore_public_acls      = {str(props.get('ignore_public_acls', True)).lower()}
+  restrict_public_buckets = {str(props.get('restrict_public_buckets', True)).lower()}
+}}
+""")
 
             elif tf_type == "aws_security_group":
                 vpc_ref = f"aws_vpc.{props.get('vpc_name', vpcs[0]['name'] if vpcs else 'main_vpc')}.id"
@@ -692,6 +770,56 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 }}
 """)
 
+            elif tf_type == "aws_eip":
+                blocks.append(f"""resource "aws_eip" "{name}" {{
+  domain = "vpc"
+
+  tags = {{
+    Name      = "{name}"
+    ManagedBy = "Vellum"
+  }}
+}}
+""")
+
+            elif tf_type == "aws_nat_gateway":
+                eip_name = props.get("eip_name") or props.get("allocation_id")
+                if not eip_name:
+                    matching_eip = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_eip"), None)
+                    eip_name = matching_eip
+
+                if eip_name and not str(eip_name).startswith("eipalloc-"):
+                    alloc_ref = f"aws_eip.{eip_name}.id"
+                elif eip_name:
+                    alloc_ref = f'"{eip_name}"'
+                else:
+                    alloc_ref = f"aws_eip.{name}_eip.id"
+
+                sub_name = props.get("subnet_name") or props.get("subnet_id")
+                if not sub_name:
+                    matching_sub = next(
+                        (r["name"] for r in mapped_resources if r["tf_type"] == "aws_subnet" and (r["properties"].get("map_public_ip_on_launch") or "public" in r["name"].lower())),
+                        next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_subnet"), None)
+                    )
+                    sub_name = matching_sub
+
+                if sub_name and not str(sub_name).startswith("subnet-"):
+                    sub_ref = f"aws_subnet.{sub_name}.id"
+                elif sub_name:
+                    sub_ref = f'"{sub_name}"'
+                else:
+                    sub_ref = "aws_subnet.main.id"
+
+                blocks.append(f"""resource "aws_nat_gateway" "{name}" {{
+  allocation_id = {alloc_ref}
+  subnet_id     = {sub_ref}
+
+  tags = {{
+    Name      = "{name}"
+    ManagedBy = "Vellum"
+  }}
+}}
+""")
+
             else:
                 # Dynamic generic AWS resource serializer (no resource dropped)
                 clean_tf_type = tf_type if tf_type.startswith("aws_") else f"aws_{tf_type}"
@@ -755,6 +883,10 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
                 outputs.append(f'output "{name}_name" {{\n  value = aws_dynamodb_table.{name}.name\n}}')
             elif tf_type == "aws_secretsmanager_secret":
                 outputs.append(f'output "{name}_arn" {{\n  value = aws_secretsmanager_secret.{name}.arn\n}}')
+            elif tf_type == "aws_nat_gateway":
+                outputs.append(f'output "{name}_id" {{\n  value = aws_nat_gateway.{name}.id\n}}')
+            elif tf_type == "aws_eip":
+                outputs.append(f'output "{name}_public_ip" {{\n  value = aws_eip.{name}.public_ip\n}}')
 
         if outputs:
             blocks.append("\n# Outputs\n" + "\n".join(outputs))

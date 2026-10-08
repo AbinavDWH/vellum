@@ -11,6 +11,7 @@ class EnvironmentSnapshot(BaseModel):
     region: str = "us-east-1"
     timestamp: float = Field(default_factory=time.time)
     ttl_seconds: int = 60
+    unavailable: bool = False
 
     # Discovered external cloud state
     buckets: List[str] = Field(default_factory=list)

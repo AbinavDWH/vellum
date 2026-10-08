@@ -251,6 +251,8 @@ class HybridLLMClient:
         prov = provider.lower().strip()
         if prov not in ["groq", "local", "hybrid"]:
             raise ValueError(f"Invalid AI provider '{provider}'. Must be 'groq' or 'local'.")
+        if prov == "groq" and not self.groq.is_configured():
+            raise ValueError("Cannot switch to Groq: GROQ_API_KEY is not configured.")
         self._active_provider = prov
         settings.LLM_PROVIDER = prov
         if model:

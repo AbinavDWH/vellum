@@ -381,8 +381,8 @@ class ServiceProbeResult(BaseModel):
 
 
 class ConnectionTestResponse(BaseModel):
-    account_id: str
-    arn: str
+    account_id: Optional[str] = None
+    arn: Optional[str] = None
     services: List[ServiceProbeResult]
     overall_status: str  # "ok", "partial", "error"
 

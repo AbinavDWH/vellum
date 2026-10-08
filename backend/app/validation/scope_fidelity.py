@@ -25,6 +25,7 @@ class ScopeFidelityValidator:
         "subnet", "public_subnet", "private_subnet", "aws_subnet",
         "internet_gateway", "aws_internet_gateway", "igw",
         "nat_gateway", "aws_nat_gateway",
+        "elastic_ip", "eip", "aws_eip",
         "route_table", "aws_route_table",
         "route", "aws_route",
         "route_table_association", "aws_route_table_association",
@@ -40,6 +41,9 @@ class ScopeFidelityValidator:
         # Storage
         "object_storage", "s3_bucket", "storage_bucket", "bucket", "s3", "aws_s3_bucket",
         "static_site", "website_hosting", "website",
+        "bucket_versioning", "aws_s3_bucket_versioning",
+        "bucket_encryption", "aws_s3_bucket_server_side_encryption_configuration",
+        "bucket_public_access_block",
         "aws_s3_bucket_website_configuration", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy",
 
         # Compute
@@ -78,7 +82,8 @@ class ScopeFidelityValidator:
 
     NETWORK_KEYWORDS = [
         "vpc", "network", "subnet", "virtual network", "cidr", "gateway", "igw", "route",
-        "security group", "security groups", "firewall", "load balancer", "alb"
+        "security group", "security groups", "firewall", "load balancer", "alb",
+        "nat", "nat gateway", "nat_gateway", "eip", "elastic ip", "elastic_ip"
     ]
 
     CACHE_KEYWORDS = [
@@ -153,6 +158,10 @@ class ScopeFidelityValidator:
                 )
                 for r in ir.cloud.resources
             )
+            has_nat_gateway = any(
+                r.type.lower().strip() in ["nat_gateway", "aws_nat_gateway"]
+                for r in ir.cloud.resources
+            )
             has_s3_website = any(
                 r.type in ["object_storage", "s3_bucket", "static_site", "website_hosting"] and (
                     r.properties.get("website") is True
@@ -184,15 +193,33 @@ class ScopeFidelityValidator:
                         res.is_dependency = True
                         res.dependency_reason = "Required because: public subnet requires an Internet Gateway for internet access."
                         continue
-                elif r_type in ["route_table", "aws_route_table", "route", "aws_route"]:
-                    if has_public_subnet:
+                elif r_type in ["elastic_ip", "eip", "aws_eip"]:
+                    if has_nat_gateway:
                         res.is_dependency = True
-                        res.dependency_reason = "Required because: public subnet requires route table entry (0.0.0.0/0 -> IGW)."
+                        res.dependency_reason = "Required because: AWS NAT Gateway requires an Elastic IP (EIP) allocation."
                         continue
-                elif r_type in ["aws_s3_bucket_website_configuration", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy"]:
-                    if has_s3_website:
+                    elif intents["wants_network"] or any(cls._matches_whole_word(k, session_text) for k in ["elastic ip", "eip"]):
+                        res.is_dependency = False
+                        continue
+                    else:
+                        errors.append(
+                            f"SCOPE_FIDELITY: Unrequested Elastic IP '{res.name}' ({res.type}) created without NAT Gateway or networking intent."
+                        )
+                        continue
+                elif r_type in ["route_table", "aws_route_table", "route", "aws_route"]:
+                    if has_public_subnet or has_nat_gateway:
                         res.is_dependency = True
-                        res.dependency_reason = "Required because: static website hosting requires website configuration and public read policy."
+                        res.dependency_reason = "Required because: public subnet or NAT gateway requires route table entry."
+                        continue
+                elif r_type in [
+                    "aws_s3_bucket_website_configuration", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy",
+                    "bucket_versioning", "aws_s3_bucket_versioning", "bucket_encryption",
+                    "aws_s3_bucket_server_side_encryption_configuration", "bucket_public_access_block"
+                ]:
+                    has_s3 = any(r.type.lower().strip() in ["object_storage", "s3_bucket", "storage_bucket", "bucket", "s3", "aws_s3_bucket"] for r in ir.cloud.resources)
+                    if has_s3_website or has_s3:
+                        res.is_dependency = True
+                        res.dependency_reason = "Required because: S3 bucket configuration dependency."
                         continue
                 elif r_type in ["db_subnet_group", "aws_db_subnet_group", "rds_subnet_group", "subnet_group"]:
                     if has_cloud_db and intents["wants_database"]:
@@ -218,7 +245,7 @@ class ScopeFidelityValidator:
                     continue
 
                 # Check primary user requests
-                if r_type in ["virtual_network", "vpc", "subnet", "public_subnet", "private_subnet", "aws_vpc", "aws_subnet"]:
+                if r_type in ["virtual_network", "vpc", "subnet", "public_subnet", "private_subnet", "aws_vpc", "aws_subnet", "nat_gateway", "aws_nat_gateway"]:
                     if not intents["wants_network"] and not (intents["wants_database"] and has_cloud_db):
                         errors.append(
                             f"SCOPE_FIDELITY: Unrequested network resource '{res.name}' ({res.type}) created when user did not request VPC or networking."

@@ -268,6 +268,9 @@ export const App: React.FC = () => {
     setDriftDiff(null);
     api.createSession('New Infrastructure Session', targetProvider, targetEnvironment)
       .then((sess) => {
+        if (sess.id) {
+          setCurrentSessionId(sess.id);
+        }
         if (sess.requirements_md) {
           setCurrentRequirementsMd(sess.requirements_md);
         }

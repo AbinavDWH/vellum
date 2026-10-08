@@ -180,11 +180,14 @@ def get_active_ai():
 @app.post("/api/ai/provider")
 def set_active_ai(payload: ActiveAIRequest):
     """Switch the single active AI provider and model immediately."""
+    prov = payload.provider.lower().strip()
+    if prov == "groq" and not llm_client.groq.is_configured():
+        raise HTTPException(status_code=400, detail="Cannot switch to Groq: GROQ_API_KEY is not configured.")
     try:
         llm_client.set_active_provider(payload.provider, payload.model)
         return llm_client.get_provider_status()
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get("/api/models")
@@ -861,31 +864,50 @@ def execute_plan(plan_id: str, db: Session = Depends(get_db)):
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    if settings.HUMAN_APPROVAL_REQUIRED and plan.status not in ["approved", "awaiting_approval"]:
-        if plan.status == "completed":
-            exec_rec = db.query(ExecutionRecord).filter(ExecutionRecord.plan_id == plan_id).order_by(ExecutionRecord.id.desc()).first()
-            if exec_rec:
-                return ExecutionResult(
-                    plan_id=plan_id,
-                    status=exec_rec.status,
-                    success=exec_rec.success,
-                    run_number=exec_rec.run_number or 1,
-                    resources_created=exec_rec.resources_created,
-                    resources_updated=exec_rec.resources_updated,
-                    resources_deleted=exec_rec.resources_deleted,
-                    terraform_output=exec_rec.terraform_output or "",
-                    sql_output=exec_rec.sql_output or "",
-                    error_message=exec_rec.error_message,
-                    execution_time_seconds=exec_rec.duration_seconds or 0.0,
-                )
-        elif plan.status in ["failed", "halted"]:
+    if plan.status == "halted":
+        raise HTTPException(status_code=400, detail="Halted plans cannot be re-run.")
+
+    if plan.status in ["executing", "running"]:
+        raise HTTPException(status_code=409, detail="Plan is already currently executing.")
+
+    target_env = "local"
+    try:
+        if plan.ir_json:
+            ir_dict = json.loads(plan.ir_json)
+            target_env = (ir_dict.get("cloud", {}).get("environment") or "local").lower()
+    except Exception:
+        pass
+
+    if plan.status in ["failed", "partial_failed"]:
+        if target_env == "local":
             plan.status = "approved"
             db.commit()
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Plan cannot be executed in current status: '{plan.status}'",
+                detail=f"Failed plans in '{target_env}' environment require a new human approval before re-running.",
             )
+    elif plan.status == "completed":
+        exec_rec = db.query(ExecutionRecord).filter(ExecutionRecord.plan_id == plan_id).order_by(ExecutionRecord.id.desc()).first()
+        if exec_rec:
+            return ExecutionResult(
+                plan_id=plan_id,
+                status=exec_rec.status,
+                success=exec_rec.success,
+                run_number=exec_rec.run_number or 1,
+                resources_created=exec_rec.resources_created,
+                resources_updated=exec_rec.resources_updated,
+                resources_deleted=exec_rec.resources_deleted,
+                terraform_output=exec_rec.terraform_output or "",
+                sql_output=exec_rec.sql_output or "",
+                error_message=exec_rec.error_message,
+                execution_time_seconds=exec_rec.duration_seconds or 0.0,
+            )
+    elif plan.status != "approved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Plan cannot be executed in current status: '{plan.status}'. Only approved plans can be executed.",
+        )
 
     res = orchestrator.execute_approved_plan(plan_id=plan_id, db=db)
     return res
@@ -1059,7 +1081,7 @@ def list_executions(limit: int = 50, db: Session = Depends(get_db)):
             error_message=r.error_message,
             duration_seconds=r.duration_seconds or 0.0,
             started_at=r.started_at.isoformat() if r.started_at else None,
-            completed_at=r.completed_at.isoformat() if r.completed_at else None,
+            completed_at=(r.started_at + datetime.timedelta(seconds=r.duration_seconds or 0.0)).isoformat() if r.started_at else None,
             resource_checklist=json.loads(r.resource_checklist_json) if getattr(r, "resource_checklist_json", None) and r.resource_checklist_json != "[]" else None,
         )
         for r in records
@@ -1085,7 +1107,7 @@ def list_plan_executions(plan_id: str, db: Session = Depends(get_db)):
             error_message=r.error_message,
             duration_seconds=r.duration_seconds or 0.0,
             started_at=r.started_at.isoformat() if r.started_at else None,
-            completed_at=r.completed_at.isoformat() if r.completed_at else None,
+            completed_at=(r.started_at + datetime.timedelta(seconds=r.duration_seconds or 0.0)).isoformat() if r.started_at else None,
             resource_checklist=json.loads(r.resource_checklist_json) if getattr(r, "resource_checklist_json", None) and r.resource_checklist_json != "[]" else None,
         )
         for r in records
@@ -1155,11 +1177,17 @@ def rollback_plan(plan_id: str, db: Session = Depends(get_db)):
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
 
+    import shutil
+    if not shutil.which(execution_engine.terraform_binary):
+        raise HTTPException(status_code=400, detail=f"{execution_engine.terraform_binary} not found")
+
     plan_dir = os.path.join(settings.TERRAFORM_WORKSPACE, plan_id)
     if not os.path.exists(plan_dir):
         raise HTTPException(status_code=400, detail=f"Plan workspace does not exist: {plan_dir}")
 
     result = execution_engine.rollback(plan_dir=plan_dir, plan_id=plan_id, db=db)
+    if not result.success and "not found" in (result.error_message or "").lower():
+        raise HTTPException(status_code=400, detail=result.error_message)
     return result
 
 
@@ -1517,8 +1545,33 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
             return
 
         if reexecute:
-            plan.status = "approved"
-            db.commit()
+            if plan.status == "halted":
+                await websocket.send_text("__ERROR__Halted plans cannot be re-run.")
+                await websocket.close()
+                return
+            target_env = "local"
+            try:
+                if plan.ir_json:
+                    ir_dict = json.loads(plan.ir_json)
+                    target_env = (ir_dict.get("cloud", {}).get("environment") or "local").lower()
+            except Exception:
+                pass
+            if plan.status in ["failed", "partial_failed"]:
+                if target_env == "local":
+                    plan.status = "approved"
+                    db.commit()
+                else:
+                    await websocket.send_text(f"__ERROR__Failed plans in '{target_env}' environment require a new human approval before re-running.")
+                    await websocket.close()
+                    return
+            elif plan.status != "approved":
+                await websocket.send_text(f"__ERROR__Plan cannot be re-executed in status '{plan.status}' without approval.")
+                await websocket.close()
+                return
+            else:
+                plan.status = "approved"
+                db.commit()
+
             audit_logger.log(
                 event_type="REEXEC_APPROVED",
                 plan_id=plan_id,
@@ -1552,8 +1605,8 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
             await websocket.close()
             return
 
-        if settings.HUMAN_APPROVAL_REQUIRED and plan.status not in ["approved", "awaiting_approval", "executing"]:
-            await websocket.send_text(f"__ERROR__Plan cannot be executed in current status: '{plan.status}'")
+        if plan.status not in ["approved", "executing"]:
+            await websocket.send_text(f"__ERROR__Plan cannot be executed in current status: '{plan.status}'. Only approved plans can be executed.")
             await websocket.close()
             return
     finally:
@@ -1572,7 +1625,7 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
             while True:
                 msg = await queue.get()
                 await websocket.send_text(msg)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, WebSocketDisconnect, Exception):
             pass
 
     sender_task = asyncio.create_task(sender())
@@ -1593,7 +1646,10 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        await websocket.send_text(f"__ERROR__{str(e)}")
+        try:
+            await websocket.send_text(f"__ERROR__{str(e)}")
+        except Exception:
+            pass
     finally:
         sender_task.cancel()
         try:
@@ -1630,6 +1686,7 @@ def get_environment_snapshot(
         "timestamp": snap.timestamp,
         "age_seconds": round(time.time() - snap.timestamp, 2),
         "is_stale": snap.is_stale(60.0),
+        "unavailable": snap.unavailable,
         "counts": {
             "buckets": len(snap.buckets),
             "vpcs": len(snap.vpcs),
@@ -1669,6 +1726,7 @@ def rescan_environment(
         "provider": snap.provider,
         "region": snap.region,
         "timestamp": snap.timestamp,
+        "unavailable": snap.unavailable,
         "counts": {
             "buckets": len(snap.buckets),
             "vpcs": len(snap.vpcs),

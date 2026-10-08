@@ -159,15 +159,21 @@ class ExecutionEngine:
         Feeds output to Always-On Healing Supervisor in real time.
         Returns (returncode, full_output, timed_out).
         """
-        proc = subprocess.Popen(
-            cmd,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except FileNotFoundError:
+            bin_name = cmd[0] if cmd else "executable"
+            err = f"{bin_name} not found"
+            log(f"❌ {err}")
+            return (127, err, False)
         if plan_id:
             self._active_processes[plan_id] = proc
 
@@ -1527,6 +1533,20 @@ provider "aws" {{
                 success=False,
                 status="halted",
                 error_message=err,
+                execution_time_seconds=round(time.time() - start_time, 2),
+            )
+
+        import shutil
+        if not shutil.which(self.terraform_binary):
+            err = f"{self.terraform_binary} not found"
+            log(f"❌ {err}")
+            lock.release()
+            return ExecutionResult(
+                plan_id=plan_id,
+                success=False,
+                status="failed",
+                error_message=err,
+                terraform_output="\n".join(logs),
                 execution_time_seconds=round(time.time() - start_time, 2),
             )
 

@@ -35,8 +35,8 @@ class Settings(BaseSettings):
 
     # Groq API
     GROQ_API_KEY: Optional[str] =None
-    GROQ_MODEL: str = "openai/gpt-oss-120b"
-    GROQ_FALLBACK_MODEL: str = "openai/gpt-oss-20b"
+    GROQ_MODEL: str = "qwen/qwen3.8-27b"
+    GROQ_FALLBACK_MODEL: str = "qwen/qwen3.8-27b"
     GROQ_API_URL: str = "https://api.groq.com/openai/v1"
     GROQ_TIMEOUT: float = 30.0
 
