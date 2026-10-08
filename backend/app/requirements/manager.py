@@ -9,44 +9,11 @@ from app.models import SessionRecord
 
 logger = structlog.get_logger(__name__)
 
-DEFAULT_TEMPLATE = """# Architecture Specification & Requirements
-
-## 1. System Overview & Objective
-*No requirements documented yet. Converse with the Vellum AI Architect to formulate your infrastructure.*
-
-## 2. Target Environment & Cloud Metadata
+DEFAULT_TEMPLATE = """# Spec
 - **Cloud Provider**: {cloud_provider}
 - **Environment**: {environment}
-- **Target Region**: us-east-1
-- **Availability Zones**: us-east-1a, us-east-1b
-- **Compliance Baseline**: CIS AWS Foundations Benchmark v3.0
 
-## 3. Network Topology & IPAM Architecture
-- **VPC CIDR Block**: TBD
-- **Subnet Tiering Matrix**: TBD (Public, Private Application, Private Database tiers)
-- **Gateways & Egress Routing**: TBD (Internet Gateway, NAT Gateway redundancy)
-- **Security Groups & Firewall Policy**: TBD (Port ingress/egress boundaries)
-
-## 4. Compute & Workload Architecture
-- **Compute Sizing**: TBD
-- **Instance Profile & IAM**: TBD
-- **Storage / Root Volume**: TBD (EBS gp3 KMS encrypted)
-
-## 5. Storage Tier (Object Storage)
-- **Bucket Identification**: TBD
-- **Encryption at Rest**: TBD (SSE-KMS / SSE-S3)
-- **Access Policies**: TBD (Public Access Block, TLS enforcement)
-
-## 6. Managed Database Tier & Data Model
-- **Database Engine**: TBD
-- **Deployment Topology**: TBD (Multi-AZ / Single-AZ)
-- **Storage & Backup Policy**: TBD
-- **Schema & Relational Data Model**: TBD
-
-## 7. Security, Reliability & Compliance
-- **Encryption at Rest / Transit**: TBD
-- **Secrets Management**: TBD (AWS Secrets Manager)
-- **Monitoring & Observability**: TBD (CloudWatch Alarms)
+*No requirements documented yet*
 """
 
 

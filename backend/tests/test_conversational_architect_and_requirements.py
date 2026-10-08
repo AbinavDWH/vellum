@@ -30,7 +30,7 @@ def test_conversational_turn_updates_requirements_and_avoids_hardcoded_questions
     assert data["status"] == "conversation"
     assert len(data["message"]) > 0
     assert data.get("requirements_md") is not None
-    assert "# Architecture Specification & Requirements" in data["requirements_md"]
+    assert data["requirements_md"].startswith("# Spec") and "**Cloud Provider**" in data["requirements_md"]
 
     # Verify requirements.md was saved to DB and disk
     req_res = client.get(f"/api/sessions/{session_id}/requirements")
@@ -109,7 +109,7 @@ Internal metrics analytics pipeline storing high-volume event logs.
     assert put_res.json()["requirements_md"] == custom_md.strip()
 
     # Trigger plan directly from requirements
-    plan_res = client.post(f"/api/sessions/{sess_id}/plan-from-requirements")
+    plan_res = client.post(f"/api/sessions/{sess_id}/plan-from-requirements?environment=local")
     assert plan_res.status_code == 200
     plan_data = plan_res.json()
     assert plan_data["status"] == "plan_ready"

@@ -72,7 +72,7 @@ class GroqClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
-        max_tokens: int = 2048,
+        max_tokens: int = settings.LLM_CHAT_MAX_TOKENS,
         json_mode: bool = False,
         model: Optional[str] = None,
     ) -> str:
@@ -132,8 +132,8 @@ class GroqClient:
                         )
                         if payload.get("model") != self.fallback_model:
                             payload["model"] = self.fallback_model
-                        if payload.get("max_tokens", 0) > 1500:
-                            payload["max_tokens"] = 1500
+                        if payload.get("max_tokens", 0) > settings.LLM_GROQ_RETRY_MAX_TOKENS:
+                            payload["max_tokens"] = settings.LLM_GROQ_RETRY_MAX_TOKENS
                         time.sleep(delay)
                         continue
                     elif status in [400, 403, 404] and payload.get("model") != self.fallback_model:
@@ -156,7 +156,7 @@ class LMStudioClient:
 
     def __init__(self, base_url: str = settings.LM_STUDIO_URL):
         self.base_url = base_url.rstrip("/")
-        self.timeout = 180.0
+        self.timeout = settings.LM_STUDIO_TIMEOUT
         self._detected_model: Optional[str] = None
 
     def get_active_model(self) -> str:
@@ -312,7 +312,7 @@ class HybridLLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0.2,
-        max_tokens: int = 4096,
+        max_tokens: int = settings.LLM_CHAT_MAX_TOKENS,
         json_mode: bool = False,
         model: Optional[str] = None,
         provider: Optional[str] = None,
@@ -682,7 +682,7 @@ class HybridLLMClient:
         messages.append({"role": "user", "content": prompt})
 
         try:
-            return self.chat(messages, temperature=0.3, max_tokens=1500, model=model, provider=provider)
+            return self.chat(messages, temperature=0.3, max_tokens=settings.LLM_ARCHITECT_MAX_TOKENS, model=model, provider=provider)
         except Exception as e:
             logger.error("Architect chat call failed, falling back", error=str(e))
             return self._fallback_chat_architect(prompt, cloud_provider, environment)
@@ -710,14 +710,14 @@ class HybridLLMClient:
                     f"Target Cloud Provider: {cloud_provider.upper()}\n"
                     f"Target Environment: {environment}\n\n"
                     f"Latest User Requirement:\n{prompt}\n\n"
-                    f"Architect Response:\n{ai_response}\n\n"
-                    f"Synthesize the complete, updated requirements.md document adhering to the standard outline."
+                    f"Architect Response (suggestions only, record nothing from it unless the user accepted it):\n{ai_response}\n\n"
+                    f"Output the updated requirements.md in the compact data layout. Facts the user stated only."
                 )
             }
         ]
 
         try:
-            raw = self.chat(messages, temperature=0.1, max_tokens=4096, model=model, provider=provider)
+            raw = self.chat(messages, temperature=0.1, max_tokens=settings.LLM_CHAT_MAX_TOKENS, model=model, provider=provider)
             clean = raw.strip()
             if clean.startswith("```markdown"):
                 clean = clean[len("```markdown"):].strip()
@@ -725,8 +725,8 @@ class HybridLLMClient:
                 clean = clean[3:].strip()
             if clean.endswith("```"):
                 clean = clean[:-3].strip()
-            if not any(k in clean for k in ["## 6.", "Database", "database"]) or not any(k in clean for k in ["## 3.", "Network", "network"]):
-                logger.warning("Synthesized requirements document was incomplete, merging fallback sections")
+            if "**Cloud Provider**" not in clean or "**Environment**" not in clean:
+                logger.warning("Synthesized requirements.md has no header lines, using rule-based fallback")
                 return self._fallback_synthesize_requirements(current_requirements_md, prompt, cloud_provider, environment)
             return clean if clean else current_requirements_md
         except Exception as e:
@@ -765,273 +765,139 @@ class HybridLLMClient:
         cloud_provider: str = "aws",
         environment: str = "local",
     ) -> str:
-        prompt_clean = prompt.strip()
-        lowered = prompt_clean.lower()
-        provider_name = cloud_provider.upper() if cloud_provider else "AWS"
-        env_name = environment if environment else "local"
+        """Rule-based (no LLM) update of requirements.md in the compact data layout.
 
-        # Check for user decisions in prompt or current md
-        cidr = "10.0.0.0/16"
-        if "172.16" in lowered or "172.16" in current_requirements_md:
-            cidr = "172.16.0.0/16"
-        elif "192.168" in lowered or "192.168" in current_requirements_md:
-            cidr = "192.168.0.0/16"
-
-        prefix = cidr.rsplit(".", 2)[0]
-        pub1 = f"{prefix}.1.0/24"
-        pub2 = f"{prefix}.2.0/24"
-        app1 = f"{prefix}.10.0/24"
-        app2 = f"{prefix}.11.0/24"
-        db1 = f"{prefix}.20.0/24"
-        db2 = f"{prefix}.21.0/24"
-
-        # NAT Gateway redundancy
-        if "single nat" in lowered or "single nat" in current_requirements_md.lower():
-            nat_desc = "Single NAT Gateway with dedicated Elastic IP in public-subnet-1a (Cost-optimized, ~$32/mo)"
-        elif "no nat" in lowered or "no nat" in current_requirements_md.lower():
-            nat_desc = "No NAT Gateway (Isolated VPC, private VPC Endpoints for S3 and SSM)"
-        else:
-            nat_desc = "High Availability dual NAT Gateways with dedicated Elastic IPs (`eip-nat-1a`, `eip-nat-1b`)"
-
-        # Database Engine & Sizing
-        db_engine = "PostgreSQL 16.2"
-        db_port = 5432
-        if "mysql" in lowered or "mysql" in current_requirements_md.lower():
-            db_engine = "MySQL 8.0"
-            db_port = 3306
-        elif "mongodb" in lowered or "mongo" in lowered:
-            db_engine = "MongoDB DocumentStore 7.0"
-            db_port = 27017
-
-        # Database HA
-        if "single az" in lowered or "single az" in current_requirements_md.lower():
-            db_ha = "Single-AZ Deployment (Cost-optimized dev/test configuration)"
-        else:
-            db_ha = "Multi-AZ Deployment (Synchronous standby replica in secondary AZ for automated failover)"
-
-        # S3 Encryption
-        if "sse-s3" in lowered or "sse-s3" in current_requirements_md.lower():
-            s3_enc = "SSE-S3 (AES-256 Amazon S3 managed key)"
-        elif "customer managed" in lowered or "customer managed" in current_requirements_md.lower():
-            s3_enc = "Customer Managed KMS Key (CMK) with automated key rotation"
-        else:
-            s3_enc = "Server-Side Encryption with AWS KMS (SSE-KMS, `alias/aws/s3`)"
-
-        # EC2 Sizing
-        compute_size = "AWS EC2 `t3.micro` (2 vCPU, 1 GB RAM, Nitro-based, EBS-optimized)"
-        if "t3.small" in lowered or "t3.small" in current_requirements_md.lower():
-            compute_size = "AWS EC2 `t3.small` (2 vCPU, 2 GB RAM, Nitro-based, EBS-optimized)"
-        elif "t4g.small" in lowered or "graviton" in lowered:
-            compute_size = "AWS EC2 `t4g.small` (AWS Graviton3, 2 vCPU, 2 GB RAM, ARM64)"
-
-        # Extract table names
-        detected_tables = []
-        table_matches = re.findall(r'(?:table|entity|model)s?[^\n\w]+(?:named|called)?\s*[\'"`]?([a-zA-Z0-9_]{2,30})[\'"`]?', lowered)
-        for t in table_matches:
-            if t not in ["name", "called", "named", "table", "for", "with", "and"]:
-                detected_tables.append(t)
-
-        direct_matches = re.findall(r'table\s+name\s+([a-zA-Z0-9_]+)', lowered)
-        for d in direct_matches:
-            if d not in detected_tables:
-                detected_tables.append(d)
-
-        if not detected_tables:
-            if any(w in lowered for w in ["user", "account", "login", "auth"]):
-                detected_tables.append("users")
-            elif any(w in lowered for w in ["patient", "clinic", "health"]):
-                detected_tables.append("patients")
-            elif any(w in lowered for w in ["order", "shop", "ecommerce", "cart"]):
-                detected_tables.append("orders")
-            elif any(w in lowered for w in ["database", "rds", "postgres", "sql"]):
-                detected_tables.append("users")
-
-        table_sections = []
-        for tbl in detected_tables:
-            tbl_clean = tbl.lower().strip()
-            if tbl_clean in ["user", "users"]:
-                table_sections.append(
-                    "- **Table**: `users`\n"
-                    "  - `id`: UUID PRIMARY KEY DEFAULT gen_random_uuid()\n"
-                    "  - `username`: VARCHAR(100) UNIQUE NOT NULL (Indexed for rapid authentication)\n"
-                    "  - `email`: VARCHAR(255) UNIQUE NOT NULL (Indexed)\n"
-                    "  - `password_hash`: VARCHAR(255) NOT NULL\n"
-                    "  - `first_name`: VARCHAR(100) NULLABLE\n"
-                    "  - `last_name`: VARCHAR(100) NULLABLE\n"
-                    "  - `role`: VARCHAR(50) DEFAULT 'user' NOT NULL\n"
-                    "  - `is_active`: BOOLEAN DEFAULT TRUE NOT NULL\n"
-                    "  - `created_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL\n"
-                    "  - `updated_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL"
-                )
-            elif tbl_clean in ["order", "orders"]:
-                table_sections.append(
-                    "- **Table**: `orders`\n"
-                    "  - `id`: UUID PRIMARY KEY DEFAULT gen_random_uuid()\n"
-                    "  - `user_id`: UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE\n"
-                    "  - `order_number`: VARCHAR(64) UNIQUE NOT NULL\n"
-                    "  - `total_amount`: DECIMAL(12,2) NOT NULL CHECK (total_amount >= 0)\n"
-                    "  - `currency`: VARCHAR(3) DEFAULT 'USD' NOT NULL\n"
-                    "  - `status`: VARCHAR(32) DEFAULT 'pending' NOT NULL\n"
-                    "  - `created_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL\n"
-                    "  - `updated_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL"
-                )
-            elif tbl_clean in ["patient", "patients"]:
-                table_sections.append(
-                    "- **Table**: `patients`\n"
-                    "  - `id`: UUID PRIMARY KEY DEFAULT gen_random_uuid()\n"
-                    "  - `medical_record_number`: VARCHAR(64) UNIQUE NOT NULL (Indexed)\n"
-                    "  - `first_name`: VARCHAR(100) NOT NULL\n"
-                    "  - `last_name`: VARCHAR(100) NOT NULL\n"
-                    "  - `date_of_birth`: DATE NOT NULL\n"
-                    "  - `gender`: VARCHAR(20) NOT NULL\n"
-                    "  - `contact_phone`: VARCHAR(30) NULLABLE\n"
-                    "  - `created_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL\n"
-                    "  - `updated_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL"
-                )
-            else:
-                table_sections.append(
-                    f"- **Table**: `{tbl_clean}`\n"
-                    f"  - `id`: UUID PRIMARY KEY DEFAULT gen_random_uuid()\n"
-                    f"  - `name`: VARCHAR(255) NOT NULL\n"
-                    f"  - `status`: VARCHAR(50) DEFAULT 'active' NOT NULL\n"
-                    f"  - `metadata_json`: JSONB DEFAULT '{{}}'::jsonb NOT NULL\n"
-                    f"  - `created_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL\n"
-                    f"  - `updated_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL"
-                )
-
-        schema_md = "\n".join(table_sections) if table_sections else (
-            "- **Table**: `users`\n"
-            "  - `id`: UUID PRIMARY KEY DEFAULT gen_random_uuid()\n"
-            "  - `username`: VARCHAR(100) UNIQUE NOT NULL\n"
-            "  - `email`: VARCHAR(255) UNIQUE NOT NULL\n"
-            "  - `created_at`: TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL"
-        )
-
+        Writes ONLY facts the user typed: names, CIDRs, sizes, engines, table names and
+        features they asked for by name. It never invents defaults (HA, encryption, NAT,
+        schemas, ...). Existing facts are kept and merged, never duplicated.
+        """
         from app.validation.scope_fidelity import ScopeFidelityValidator
-        intents = ScopeFidelityValidator.analyze_user_intent(prompt)
 
-        # For static site hosting
-        if intents["wants_static_site"]:
-            return f"""# Architecture Specification & Requirements
+        provider_name = cloud_provider.upper() if cloud_provider else "AWS"
+        env_name = environment or "unset"
+        text = " ".join((prompt or "").split())
+        low = text.lower()
 
-## 1. System Overview & Objective
-- **Workload Summary**: High-performance static website hosting on AWS S3.
-- **Core Requirement**: {prompt.strip()}
-- **Architectural Tenets**: Object storage static hosting, HTTPS / public read capability for static content.
+        # ---- read the existing compact spec -------------------------------
+        resources: Dict[str, Dict[str, str]] = {}
+        tables: Dict[str, str] = {}
+        notes: List[str] = []
+        region: Optional[str] = None
+        section = ""
+        for raw_line in (current_requirements_md or "").splitlines():
+            line = raw_line.strip()
+            if line.startswith("## "):
+                section = line[3:].strip().lower()
+                continue
+            if not line.startswith("- "):
+                continue
+            body = line[2:].strip()
+            if body.startswith("**Region**"):
+                region = body.split(":", 1)[1].strip() or None
+            elif body.startswith("**"):
+                continue  # Cloud Provider / Environment are re-written below
+            elif section == "resources" and ":" in body:
+                key, val = body.split(":", 1)
+                kv: Dict[str, str] = {}
+                for pair in val.split(","):
+                    if "=" in pair:
+                        k, v = pair.split("=", 1)
+                        kv[k.strip()] = v.strip()
+                resources[key.strip()] = kv
+            elif section == "data model":
+                name, _, cols = body.partition(":")
+                tables[name.strip()] = cols.strip()
+            elif section == "notes":
+                notes.append(body)
 
-## 2. Target Environment & Cloud Metadata
-- **Cloud Provider**: {provider_name}
-- **Environment**: {env_name}
-- **Target Region**: us-east-1
+        def put(resource: str, **facts: str) -> None:
+            entry = resources.setdefault(resource, {})
+            entry.pop("requested", None)
+            entry.update({k: v for k, v in facts.items() if v})
 
-## 3. Storage & Static Website Hosting Tier (Amazon S3)
-- **Bucket Identification**: `static-site-assets-{env_name}`
-- **Hosting Mode**: Static website hosting with `index.html` and `error.html`
-- **Bucket Policy**: Public read allowed on `s3:GetObject` for website bucket
-- **Public Access Block**: `block_public_policy = false`, `restrict_public_buckets = false`
-"""
+        # ---- facts the user stated in this message ------------------------
+        snapshot_before = (repr(resources), repr(tables), region)
+        intents = ScopeFidelityValidator.analyze_user_intent(text)
 
-        # For pure VPC networking
-        if intents["wants_network"] and not intents["wants_database"] and not intents["wants_storage"]:
-            return f"""# Architecture Specification & Requirements
+        m = re.search(r"\b((?:us|eu|ap|sa|ca|me|af)-[a-z]+-\d)\b", low)
+        if m:
+            region = m.group(1)
 
-## 1. System Overview & Objective
-- **Workload Summary**: Resilient cloud network infrastructure on {provider_name}.
-- **Core Requirement**: {prompt.strip()}
-- **Architectural Tenets**: Zero-trust network segmentation, route table segregation.
+        cidr_m = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3}/\d{1,2})\b", text)
+        if intents["wants_network"] or cidr_m:
+            put("vpc", cidr=cidr_m.group(1) if cidr_m else "")
+            if "single nat" in low:
+                put("vpc", nat="single")
+            elif "no nat" in low:
+                put("vpc", nat="none")
 
-## 2. Target Environment & Cloud Metadata
-- **Cloud Provider**: {provider_name}
-- **Environment**: {env_name}
-- **Target Region**: us-east-1
+        if intents["wants_static_site"] or intents["wants_storage"] or "bucket" in low:
+            bucket_m = re.search(r"bucket\s+(?:named|called|name)\s+['\"`]?([a-z0-9][a-z0-9.\-]{2,62})", low)
+            put("s3_bucket", name=bucket_m.group(1) if bucket_m else "")
+            if intents["wants_static_site"]:
+                put("s3_bucket", static_website="true")
+            if "versioning" in low:
+                put("s3_bucket", versioning="true")
+            enc_m = re.search(r"\b(sse-s3|sse-kms)\b", low)
+            if enc_m:
+                put("s3_bucket", encryption=enc_m.group(1))
+            elif "encrypt" in low:
+                put("s3_bucket", encryption="true")
 
-## 3. Network Topology & IPAM Architecture
-- **VPC CIDR Block**: `{cidr}`
-- **Subnet Tiering Matrix**:
-  - `public-subnet-1a`: `{pub1}` (AZ: us-east-1a, IGW attached, map public IP)
-  - `private-subnet-1b`: `{app1}` (AZ: us-east-1b, Isolated private subnet)
-- **Gateways & Egress Routing**:
-  - **Internet Gateway (IGW)**: `main-vpc-igw` (Default route `0.0.0.0/0` for public subnet)
-"""
+        if intents["wants_database"]:
+            eng_m = re.search(r"\b(postgres(?:ql)?|mysql|mongodb|mongo)\b", low)
+            engine = eng_m.group(1) if eng_m else ""
+            engine = {"postgres": "postgresql", "mongo": "mongodb"}.get(engine, engine)
+            cls_m = re.search(r"\bdb\.[a-z0-9]+\.[a-z0-9]+\b", low)
+            put("database", engine=engine, instance_class=cls_m.group(0) if cls_m else "")
+            if re.search(r"multi[- ]?az", low):
+                put("database", multi_az="true")
+            elif "single az" in low:
+                put("database", multi_az="false")
 
-        # For pure database
-        if intents["wants_database"] and not intents["wants_network"] and not intents["wants_storage"]:
-            return f"""# Architecture Specification & Requirements
+        if intents["wants_compute"]:
+            it_m = re.search(r"\b(?:t2|t3a?|t4g|m[56]i?|c[56]i?)\.(?:nano|micro|small|medium|large|xlarge|2xlarge)\b", low)
+            put("compute", instance_type=it_m.group(0) if it_m else "")
+        if intents["wants_cache"]:
+            put("cache")
+        if intents["wants_queue"]:
+            put("queue")
 
-## 1. System Overview & Objective
-- **Workload Summary**: Database schema & persistence model.
-- **Core Requirement**: {prompt.strip()}
+        # table names only when the user typed them (never guessed from keywords)
+        if intents["wants_database"]:
+            skip = {"name", "called", "named", "table", "for", "with", "and", "the", "a"}
+            names = re.findall(r"(?:table|entity|model)s?[^\n\w]+(?:named|called)?\s*['\"`]?([a-z0-9_]{2,30})['\"`]?", low)
+            names += re.findall(r"table\s+name\s+([a-z0-9_]+)", low)
+            for name in names:
+                if name not in skip:
+                    tables.setdefault(name, "")
 
-## 2. Target Environment & Database Engine
-- **Database Engine**: {db_engine}
-- **Environment**: {env_name}
+        # Keep a short note only when (a) the message states a constraint, or (b) we could not
+        # extract any structured fact from it (e.g. "a backend for a telemedicine platform"),
+        # so the user's goal is not lost. A plain "create X" request adds nothing.
+        extracted_something = snapshot_before != (repr(resources), repr(tables), region)
+        constraint = re.search(
+            r"\b(only|must|never|always|without|except|private|public|port|allow|deny|block|"
+            r"retain|retention|backup|limit|max|min|exactly|at least|at most)\b", low)
+        if text and (constraint or not extracted_something) and text.lower() not in [n.lower() for n in notes]:
+            notes.append(text[:160])
+        notes = notes[-3:]
 
-## 3. Relational Schema & Data Model
-{schema_md}
-"""
-
-        return f"""# Architecture Specification & Requirements
-
-## 1. System Overview & Objective
-- **Workload Summary**: Resilient, scalable 3-tier enterprise cloud architecture on {provider_name}.
-- **Core Requirement**: {prompt.strip()}
-- **Architectural Tenets**: Zero-trust network segmentation, encryption at rest and in transit, automated multi-AZ failover, and least-privilege IAM enforcement.
-
-## 2. Target Environment & Cloud Metadata
-- **Cloud Provider**: {provider_name}
-- **Environment**: {env_name}
-- **Target Region**: us-east-1
-- **Availability Zones**: us-east-1a, us-east-1b (Multi-AZ redundancy)
-- **Compliance Baseline**: CIS {provider_name} Foundations Benchmark v3.0
-
-## 3. Network Topology & IPAM Architecture
-- **VPC CIDR Block**: `{cidr}` (65,536 total addresses, DNS hostnames & support enabled)
-- **Subnet Tiering Matrix**:
-  - `public-subnet-1a`: `{pub1}` (AZ: us-east-1a, IGW attached, map public IP)
-  - `public-subnet-1b`: `{pub2}` (AZ: us-east-1b, IGW attached, map public IP)
-  - `private-app-subnet-1a`: `{app1}` (AZ: us-east-1a, Route -> NAT Gateway 1a)
-  - `private-app-subnet-1b`: `{app2}` (AZ: us-east-1b, Route -> NAT Gateway 1b)
-  - `private-db-subnet-1a`: `{db1}` (AZ: us-east-1a, Isolated DB tier, no direct internet)
-  - `private-db-subnet-1b`: `{db2}` (AZ: us-east-1b, Isolated DB tier, no direct internet)
-- **Gateways & Egress Routing**:
-  - **Internet Gateway (IGW)**: `main-vpc-igw` (Default route `0.0.0.0/0` for public subnets)
-  - **NAT Gateways**: {nat_desc}
-  - **VPC Flow Logs**: Enabled to CloudWatch Logs with 30-day retention for auditability
-- **Security Groups & Firewall Policy**:
-  - `sg-alb`: Ingress TCP 80, 443 from `0.0.0.0/0`; Egress to `sg-app` on port 8080.
-  - `sg-app`: Ingress TCP 8080 from `sg-alb` only; Ingress TCP 22 (SSH) blocked; Egress to `sg-db` on port {db_port} and HTTPS 443 via NAT.
-  - `sg-db`: Ingress TCP {db_port} from `sg-app` only; All public 0.0.0.0/0 inbound strictly rejected.
-
-## 4. Compute & Workload Architecture
-- **Instance Profile & Sizing**: {compute_size}
-- **AMI Baseline**: Amazon Linux 2023 (x86_64, Kernel 6.1 LTS)
-- **Placement**: Private application subnets (`{app1}`, `{app2}`) behind ALB
-- **Storage / Root Volume**: 20 GB `gp3` SSD, 3,000 baseline IOPS, 125 MB/s throughput, encrypted via KMS (`alias/aws/ebs`)
-- **IAM Role & Governance**: Attached `AmazonSSMManagedInstanceCore` for secure bastionless AWS Systems Manager Session Manager access.
-
-## 5. Storage Tier (Amazon S3)
-- **Bucket Identification**: `app-data-assets-{env_name}`
-- **Encryption at Rest**: {s3_enc}
-- **Bucket Access Policy**: Public Access Block enabled across all 4 controls (`BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, `RestrictPublicBuckets`).
-- **Transport Security**: Bucket policy enforcing `aws:SecureTransport: true` (rejects unencrypted HTTP requests).
-- **Versioning & Lifecycle**: Bucket versioning enabled; non-current version expiration after 90 days; lifecycle transition to Glacier Flexible Retrieval at 30 days.
-
-## 6. Managed Database Tier & Relational Data Model
-- **Engine & Version**: {db_engine}
-- **Deployment Topology**: {db_ha}
-- **Instance Class**: `db.t3.micro` / `db.t3.small`
-- **Subnet Group**: `rds-db-subnet-group` spanning `{db1}` and `{db2}`
-- **Storage Specification**: 20 GB General Purpose SSD (`gp3`), Storage Auto-scaling enabled up to 100 GB.
-- **Security & Encryption**: Storage encrypted via AWS KMS (`alias/aws/rds`), SSL/TLS enforcement enabled (`rds.force_ssl = 1`).
-- **Backup & Maintenance**: Automated snapshot backups with 7-day retention period; backup window `03:00-04:00 UTC`; maintenance window `Sun:04:30-Sun:05:30 UTC`.
-- **Schema & Relational Data Model**:
-{schema_md}
-
-## 7. Security, Reliability & Compliance
-- **Secrets Management**: Database credentials stored in AWS Secrets Manager with KMS encryption and automated rotation.
-- **Monitoring & Observability**: AWS CloudWatch Alarms for CPU utilization (>80%), RDS FreeableMemory (<256MB), and RDS FreeStorageSpace (<5GB).
-- **Disaster Recovery (DR)**: RPO < 5 minutes (via Multi-AZ synchronous replication and S3 versioning), RTO < 30 minutes.
-"""
+        # ---- write the compact spec ---------------------------------------
+        lines = ["# Spec", f"- **Cloud Provider**: {provider_name}", f"- **Environment**: {env_name}"]
+        if region:
+            lines.append(f"- **Region**: {region}")
+        if resources:
+            lines += ["", "## Resources"]
+            for res_name, kv in resources.items():
+                lines.append(f"- {res_name}: " + (", ".join(f"{k}={v}" for k, v in kv.items()) or "requested=true"))
+        if tables:
+            lines += ["", "## Data model"]
+            for t_name, cols in tables.items():
+                lines.append(f"- {t_name}: {cols}" if cols else f"- {t_name}")
+        if notes:
+            lines += ["", "## Notes"] + [f"- {n}" for n in notes]
+        return "\n".join(lines) + "\n"
 
     def generate_ir(
         self,
@@ -1048,6 +914,18 @@ class HybridLLMClient:
             return self._generate_fallback_ir(user_requirement, requirements_md=requirements_md)
 
         user_content = f"Design infrastructure for this requirement:\n{user_requirement}"
+        if requirements_md and len(requirements_md) > settings.REQUIREMENTS_MAX_CHARS:
+            limit = settings.REQUIREMENTS_MAX_CHARS
+            logger.warning(
+                "requirements.md too large for prompt, trimming middle",
+                size_chars=len(requirements_md), limit_chars=limit,
+            )
+            head, tail = int(limit * 0.3), int(limit * 0.7)
+            requirements_md = (
+                requirements_md[:head]
+                + "\n\n[... middle of requirements.md trimmed to fit the context window ...]\n\n"
+                + requirements_md[-tail:]
+            )
         if requirements_md and requirements_md.strip():
             user_content = (
                 f"Consolidated Architecture Specification (requirements.md):\n"
@@ -1097,7 +975,10 @@ class HybridLLMClient:
 
         logger.error("All IR generation attempts failed, using robust fallback", error=str(last_error))
         fallback_ir = self._generate_fallback_ir(user_requirement, requirements_md=requirements_md)
-        fallback_warning = "⚠️ [AI FALLBACK] AI model generation failed. Plan was generated using a rule-based fallback template."
+        fallback_warning = (
+            "⚠️ [AI FALLBACK] AI model generation failed. Plan was generated using a rule-based fallback template. "
+            f"Reason: {str(last_error)[:160]}"
+        )
         if fallback_warning not in fallback_ir.assumptions:
             fallback_ir.assumptions.insert(0, fallback_warning)
         setattr(fallback_ir, "_is_fallback", True)

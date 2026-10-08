@@ -193,7 +193,7 @@ export const App: React.FC = () => {
         if (!mdText) return;
         const envMatch = mdText.match(/\*\*Environment\*\*:\s*([a-zA-Z0-9_-]+)/i);
         const provMatch = mdText.match(/\*\*Cloud Provider\*\*:\s*([a-zA-Z0-9_-]+)/i);
-        const isDefaultTemplate = mdText.includes('*No requirements documented yet') || !mdText.includes('## 3.');
+        const isDefaultTemplate = mdText.includes('*No requirements documented yet');
 
         if (envMatch && envMatch[1]) {
           const loadedEnv = envMatch[1].trim().toLowerCase();

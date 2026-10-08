@@ -25,7 +25,13 @@ class Settings(BaseSettings):
     LM_STUDIO_URL: str = "http://localhost:1234/v1"
     LM_STUDIO_MODEL: str = "qwen3.5-4b"
     LM_STUDIO_TEMPERATURE: float = 0.2
-    LM_STUDIO_MAX_TOKENS: int = 20000
+    LM_STUDIO_MAX_TOKENS: int = 8192          # max OUTPUT tokens for IR generation
+    LM_STUDIO_TIMEOUT: float = 180.0          # seconds per LM Studio request
+    LLM_CHAT_MAX_TOKENS: int = 4096           # default for chat() and requirements synthesis
+    LLM_ARCHITECT_MAX_TOKENS: int = 2048      # architect conversation replies
+    LLM_GROQ_RETRY_MAX_TOKENS: int = 4096     # cap used after a Groq 429 (must still fit an IR plan)
+    # LM Studio context length must be >= prompt (~8K) + max output. Set it in LM Studio, not here.
+    REQUIREMENTS_MAX_CHARS: int = 12000       # ~3000 tokens; longer requirements.md is trimmed in the prompt
 
     # Groq API
     GROQ_API_KEY: Optional[str] =None
