@@ -64,6 +64,12 @@ def clean_test_connections(db_session):
     db_session.add(main_conn)
     db_session.commit()
     yield
+    try:
+        db_session.query(ConnectionRecord).delete()
+        db_session.commit()
+    except Exception:
+        db_session.rollback()
+
 
 
 

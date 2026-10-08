@@ -25,7 +25,7 @@ import app.database as app_db
 
 app_config.settings.DATABASE_URL = test_db_url
 
-test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+test_engine = create_engine(test_db_url, connect_args={"check_same_thread": False, "timeout": 30})
 test_SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 app_db.engine = test_engine
@@ -56,3 +56,19 @@ def db_session():
         yield db
     finally:
         db.close()
+
+
+@pytest.fixture(autouse=True)
+def clean_database_connections():
+    """Ensure connections table is cleared after each test to prevent cross-test state leakage."""
+    yield
+    db = test_SessionLocal()
+    try:
+        from app.models import ConnectionRecord
+        db.query(ConnectionRecord).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+

@@ -391,15 +391,22 @@ export const api = {
   },
 
   // Environment Introspection (M-15)
-  async getEnvironmentSnapshot(forceRescan = false): Promise<EnvironmentSnapshot> {
-    const url = forceRescan ? `${API_BASE}/environment/snapshot?force_rescan=true` : `${API_BASE}/environment/snapshot`;
+  async getEnvironmentSnapshot(forceRescan = false, environment?: string): Promise<EnvironmentSnapshot> {
+    const env = environment || localStorage.getItem('vellum_target_environment') || 'local';
+    const params = new URLSearchParams();
+    if (forceRescan) params.append('force_rescan', 'true');
+    if (env) params.append('environment', env);
+    const url = `${API_BASE}/environment/snapshot?${params.toString()}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('Failed to fetch environment snapshot');
     return res.json();
   },
 
-  async rescanEnvironment(): Promise<EnvironmentSnapshot> {
-    const res = await fetch(`${API_BASE}/environment/rescan`, {
+  async rescanEnvironment(environment?: string): Promise<EnvironmentSnapshot> {
+    const env = environment || localStorage.getItem('vellum_target_environment') || 'local';
+    const params = new URLSearchParams();
+    if (env) params.append('environment', env);
+    const res = await fetch(`${API_BASE}/environment/rescan?${params.toString()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });

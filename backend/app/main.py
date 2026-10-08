@@ -464,7 +464,7 @@ def update_session_requirements(session_id: str, request: RequirementsUpdateRequ
 def plan_from_session_requirements(
     session_id: str,
     cloud_provider: Optional[str] = "aws",
-    environment: Optional[str] = "local",
+    environment: Optional[str] = None,
     model: Optional[str] = None,
     provider: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -849,7 +849,7 @@ def submit_approval(
         return orchestrator.process_natural_language(
             prompt=f"{plan.prompt} (Modifications: {request.modifications})",
             cloud_provider=revised_ir.cloud.provider if revised_ir.cloud else "aws",
-            environment=revised_ir.cloud.environment if revised_ir.cloud else "local",
+            environment=revised_ir.cloud.environment if revised_ir.cloud else None,
             db=db,
         )
 
@@ -1603,11 +1603,16 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
 def get_environment_snapshot(
     provider: str = "aws",
     region: str = "us-east-1",
-    environment: str = "local",
+    environment: Optional[str] = None,
     force_rescan: bool = False,
     db: Session = Depends(get_db)
 ):
     """Retrieve environment snapshot (M-15)."""
+    if not environment or not str(environment).strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Target environment is missing. Please select an environment (e.g., LocalStack or an AWS connection).",
+        )
     snap = environment_inventory.get_snapshot(provider=provider, region=region, environment=environment, force_rescan=force_rescan, db=db)
     return {
         "snapshot_id": snap.snapshot_id,
@@ -1639,10 +1644,15 @@ def get_environment_snapshot(
 def rescan_environment(
     provider: str = "aws",
     region: str = "us-east-1",
-    environment: str = "local",
+    environment: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Force an immediate parallel pre-flight scan of target environment (M-15)."""
+    if not environment or not str(environment).strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Target environment is missing. Please select an environment (e.g., LocalStack or an AWS connection).",
+        )
     snap = environment_inventory.get_snapshot(provider=provider, region=region, environment=environment, force_rescan=True, db=db)
     return {
         "status": "rescanned",

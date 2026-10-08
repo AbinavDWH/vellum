@@ -169,8 +169,8 @@ def test_audit_endpoint(client):
 
 
 def test_environment_snapshot_and_rescan_endpoints(client):
-    # 1. Snapshot endpoint
-    res = client.get("/api/environment/snapshot")
+    # 1. Snapshot endpoint with explicit environment
+    res = client.get("/api/environment/snapshot?environment=local")
     assert res.status_code == 200
     data = res.json()
     assert "snapshot_id" in data
@@ -178,10 +178,20 @@ def test_environment_snapshot_and_rescan_endpoints(client):
     assert "counts" in data
     assert "buckets" in data["counts"]
 
-    # 2. Rescan endpoint
-    rescan = client.post("/api/environment/rescan")
+    # 2. Rescan endpoint with explicit environment
+    rescan = client.post("/api/environment/rescan?environment=local")
     assert rescan.status_code == 200
     r_data = rescan.json()
     assert r_data["status"] == "rescanned"
     assert "snapshot_hash" in r_data
     assert "counts" in r_data
+
+    # 3. Target missing check when environment is omitted
+    res_missing = client.get("/api/environment/snapshot")
+    assert res_missing.status_code == 400
+    assert "missing" in res_missing.json()["detail"].lower()
+
+    rescan_missing = client.post("/api/environment/rescan")
+    assert rescan_missing.status_code == 400
+    assert "missing" in rescan_missing.json()["detail"].lower()
+

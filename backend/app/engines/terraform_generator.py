@@ -29,13 +29,20 @@ class TerraformGenerator:
     def generate(
         self,
         ir: Union[dict, UniversalIR],
-        environment: str = "local",
+        environment: Optional[str] = None,
         plan_id: Optional[str] = None,
     ) -> str:
         """
         Generate Terraform files in a dedicated workspace directory.
         Returns the absolute path to the workspace directory.
         """
+        from app.target import resolve_target
+
+        target = resolve_target(ir=ir, environment=environment, allow_missing=False)
+        if target.error and "Plan is bound to a" in target.error:
+            raise ValueError(target.error)
+        environment = target.environment
+
         if isinstance(ir, UniversalIR):
             ir_dict = ir.model_dump()
         else:
@@ -54,7 +61,7 @@ class TerraformGenerator:
         mapped = adapter.map_resources(ir_dict)
 
         # 2. Generate HCL
-        region = cloud.get("region") or settings.LOCALSTACK_REGION or "us-east-1"
+        region = target.region or cloud.get("region") or settings.LOCALSTACK_REGION or "us-east-1"
         if provider == "aws":
             hcl_content = adapter.generate_terraform(mapped, environment=environment, region=region)
         else:

@@ -14,7 +14,7 @@ class ChatRequest(BaseModel):
     conversation_history: List[ChatMessage] = Field(default_factory=list)
     model: Optional[str] = None
     cloud_provider: Optional[str] = "aws"
-    environment: Optional[str] = "local"
+    environment: Optional[str] = None
     provider: Optional[str] = None  # "hybrid", "groq", "local"
 
 

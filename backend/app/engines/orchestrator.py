@@ -70,7 +70,7 @@ class VellumOrchestrator:
         self,
         prompt: str,
         cloud_provider: str = "aws",
-        environment: str = "local",
+        environment: Optional[str] = None,
         session_id: str = "default",
         db: Optional[Session] = None,
         force_plan: bool = False,
@@ -510,7 +510,7 @@ class VellumOrchestrator:
         self,
         session_id: str = "default",
         cloud_provider: str = "aws",
-        environment: str = "local",
+        environment: Optional[str] = None,
         db: Optional[Session] = None,
         model: Optional[str] = None,
         provider: Optional[str] = None,
@@ -519,7 +519,7 @@ class VellumOrchestrator:
         req_md = requirements_manager.get_requirements(
             session_id=session_id,
             cloud_provider=cloud_provider,
-            environment=environment,
+            environment=environment or "local",
             db=db,
         )
         target_res = resolve_target(
@@ -532,7 +532,7 @@ class VellumOrchestrator:
             environment = target_res.environment
             cloud_provider = target_res.provider
 
-        if req_md and environment in ["prod", "staging"]:
+        if req_md and environment and environment in ["prod", "staging", "dev"]:
             import re
             synced_md = re.sub(r'(\*\*Environment\*\*:\s*)[a-zA-Z0-9_-]+', rf'\g<1>{environment}', req_md, flags=re.IGNORECASE)
             synced_md = re.sub(r'(\*\*Cloud Provider\*\*:\s*)[a-zA-Z0-9_-]+', rf'\g<1>{cloud_provider.upper()}', synced_md, flags=re.IGNORECASE)

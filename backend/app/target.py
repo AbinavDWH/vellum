@@ -101,8 +101,10 @@ def resolve_target(
             pass
 
     # 3. Explicit environment (passed from UI or request) takes precedence over implicit IR values
+    explicit_env: Optional[str] = None
     if environment is not None and str(environment).strip():
-        target_env = str(environment).strip()
+        explicit_env = str(environment).strip()
+        target_env = explicit_env
 
     # 4. Resolve connection from DB if target_conn_id or target_env is available
     if db is None:
@@ -112,6 +114,18 @@ def resolve_target(
             close_db = True
         except Exception:
             pass
+
+    def _norm_env(e: Optional[str]) -> str:
+        if not e:
+            return ""
+        val = str(e).strip().lower()
+        if val in ["prod", "production"]:
+            return "prod"
+        if val in ["stage", "staging"]:
+            return "staging"
+        if val in ["dev", "development"]:
+            return "dev"
+        return val
 
     try:
         if db is not None:
@@ -126,8 +140,8 @@ def resolve_target(
                 )
 
             # If user picked a non-local env without explicit conn_id, find active connection for it
-            if not conn and target_env and target_env.lower() in ["prod", "production", "staging", "stage", "dev", "development"]:
-                norm_env = "prod" if target_env.lower() in ["prod", "production"] else target_env.lower()
+            if not conn and target_env and target_env.lower() != "local":
+                norm_env = _norm_env(target_env)
                 conn = (
                     db.query(ConnectionRecord)
                     .filter(
@@ -147,6 +161,33 @@ def resolve_target(
                     )
 
             if conn:
+                norm_conn_env = _norm_env(conn.environment)
+                norm_explicit_env = _norm_env(explicit_env) if explicit_env else ""
+
+                if norm_explicit_env and norm_conn_env and norm_explicit_env != norm_conn_env:
+                    mismatch_err = f"Plan is bound to a {conn.environment} connection but you selected {explicit_env}. Re-plan."
+                    is_local = (norm_explicit_env == "local")
+                    reg = target_region or (settings.LOCALSTACK_REGION if is_local else "us-east-1") or "us-east-1"
+                    lbl = (
+                        f"LocalStack (Simulation) • Account: 000000000000 • Region: {reg}"
+                        if is_local
+                        else f"AWS Cloud ({norm_explicit_env.upper()}) • Account: {conn.account_id or 'unknown'} • Region: {reg}"
+                    )
+                    if strict_prod and not is_local:
+                        raise ProductionConnectionRequiredError(mismatch_err)
+                    return TargetResolution(
+                        environment=norm_explicit_env,
+                        provider=target_provider,
+                        region=reg,
+                        connection_id=conn.id,
+                        account_id=conn.account_id,
+                        aws_access_key=None,
+                        aws_secret_key=None,
+                        is_local=is_local,
+                        target_label=lbl,
+                        error=mismatch_err,
+                    )
+
                 target_conn_id = conn.id
                 target_env = conn.environment or target_env
                 target_region = target_region or conn.region or "us-east-1"
@@ -177,23 +218,16 @@ def resolve_target(
         )
 
     # Normalize environment
-    target_env = target_env.strip().lower()
-    if target_env in ["prod", "production"]:
-        target_env = "prod"
-    elif target_env in ["stage", "staging"]:
-        target_env = "staging"
-    elif target_env in ["dev", "development"]:
-        target_env = "dev"
-
+    target_env = _norm_env(target_env)
     is_local = (target_env == "local")
     target_region = target_region or (settings.LOCALSTACK_REGION if is_local else "us-east-1") or "us-east-1"
 
-    # 6. Block PROD without an authenticated connection
+    # 6. Block any non-local environment without an active authenticated connection
     prod_error: Optional[str] = None
-    if target_env in ["prod", "staging"]:
+    if not is_local:
         if not conn or not (aws_access_key and aws_secret_key):
             prod_error = (
-                f"Production deployment is blocked without an active, authenticated AWS connection for {target_env.upper()}. "
+                f"Deployment to '{target_env.upper()}' is blocked without an active, authenticated AWS connection. "
                 "Host computer AWS credentials fallback is prohibited to prevent accidental deployment to the wrong account."
             )
             if strict_prod:
