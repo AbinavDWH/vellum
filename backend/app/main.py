@@ -878,10 +878,14 @@ def execute_plan(plan_id: str, db: Session = Depends(get_db)):
                     error_message=exec_rec.error_message,
                     execution_time_seconds=exec_rec.duration_seconds or 0.0,
                 )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Plan cannot be executed in current status: '{plan.status}'",
-        )
+        elif plan.status in ["failed", "halted"]:
+            plan.status = "approved"
+            db.commit()
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Plan cannot be executed in current status: '{plan.status}'",
+            )
 
     res = orchestrator.execute_approved_plan(plan_id=plan_id, db=db)
     return res
@@ -1523,15 +1527,15 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
                 details={"action": "ws_reexecute"},
                 db=db,
             )
-        elif plan.status == "completed":
+        elif plan.status in ["completed", "failed", "partial_failed", "halted"]:
             exec_rec = db.query(ExecutionRecord).filter(ExecutionRecord.plan_id == plan_id).order_by(ExecutionRecord.id.desc()).first()
             if exec_rec and exec_rec.terraform_output:
                 for line in exec_rec.terraform_output.splitlines():
                     await websocket.send_text(line)
             res = {
                 "plan_id": plan_id,
-                "status": "completed",
-                "success": exec_rec.success if exec_rec else True,
+                "status": plan.status,
+                "success": exec_rec.success if exec_rec else (plan.status == "completed"),
                 "run_number": exec_rec.run_number if exec_rec else 1,
                 "resources_created": exec_rec.resources_created if exec_rec else 0,
                 "resources_updated": exec_rec.resources_updated if exec_rec else 0,
@@ -1540,7 +1544,11 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
                 "error_message": exec_rec.error_message if exec_rec else None,
                 "execution_time_seconds": exec_rec.duration_seconds if exec_rec else 0.0,
             }
-            await websocket.send_text(f"__COMPLETED__{json.dumps(res)}")
+            if plan.status == "completed":
+                await websocket.send_text(f"__COMPLETED__{json.dumps(res)}")
+            else:
+                err_msg = exec_rec.error_message if (exec_rec and exec_rec.error_message) else f"Execution ended in status '{plan.status}'"
+                await websocket.send_text(f"__ERROR__{err_msg}")
             await websocket.close()
             return
 

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Optional, Any, Union
 import json
 import logging
+import re
 from sqlalchemy.orm import Session
 from app.config import settings
 
@@ -127,6 +128,14 @@ def resolve_target(
             return "dev"
         return val
 
+    def _norm_region(r: Optional[str]) -> Optional[str]:
+        if not r:
+            return None
+        val = str(r).strip()
+        # If an availability zone was given like 'us-east-1a' or 'eu-west-1b', strip the AZ suffix to get the valid AWS region
+        val = re.sub(r"^([a-z]{2}-[a-z]+-\d+)[a-z]$", r"\1", val)
+        return val
+
     try:
         if db is not None:
             from app.models import ConnectionRecord
@@ -217,10 +226,10 @@ def resolve_target(
             "Target environment is missing. Please select an environment (e.g., LocalStack or an AWS connection) before proceeding."
         )
 
-    # Normalize environment
+    # Normalize environment and region
     target_env = _norm_env(target_env)
     is_local = (target_env == "local")
-    target_region = target_region or (settings.LOCALSTACK_REGION if is_local else "us-east-1") or "us-east-1"
+    target_region = _norm_region(target_region) or (settings.LOCALSTACK_REGION if is_local else "us-east-1") or "us-east-1"
 
     # 6. Block any non-local environment without an active authenticated connection
     prod_error: Optional[str] = None

@@ -1,5 +1,6 @@
 import os
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import Optional
 
 
@@ -43,6 +44,17 @@ class Settings(BaseSettings):
         f"sqlite:///{os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'vellum.db'))}"
     )
 
+    @field_validator("DATABASE_URL", mode="after")
+    @classmethod
+    def canonicalize_db_url(cls, v: str) -> str:
+        if v and v.startswith("sqlite:///") and not v.startswith("sqlite:////") and not v.startswith("sqlite:///:memory:"):
+            rel_path = v[len("sqlite:///"):]
+            if rel_path.startswith("./"):
+                rel_path = rel_path[2:]
+            canon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", rel_path))
+            return f"sqlite:///{canon}"
+        return v
+
     # Human in the loop
     HUMAN_APPROVAL_REQUIRED: bool = True
     AUTO_EXECUTE_READ_ONLY: bool = True
@@ -56,6 +68,16 @@ class Settings(BaseSettings):
         "TERRAFORM_WORKSPACE",
         os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'terraform-workspace'))
     )
+
+    @field_validator("TERRAFORM_WORKSPACE", mode="after")
+    @classmethod
+    def canonicalize_workspace(cls, v: str) -> str:
+        if v and not os.path.isabs(v):
+            if v.startswith("./"):
+                v = v[2:]
+            canon = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", v))
+            return canon
+        return v
     TERRAFORM_BINARY: str = "terraform"
 
     model_config = {

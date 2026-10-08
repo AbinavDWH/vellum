@@ -144,8 +144,10 @@ class AWSAdapter(CloudProviderAdapter):
         blocks: List[str] = []
 
         # 1. Terraform Block & Provider
+        import re
         localstack_url = self.get_local_endpoint()
-        target_region = region or settings.LOCALSTACK_REGION or "us-east-1"
+        raw_region = region or settings.LOCALSTACK_REGION or "us-east-1"
+        target_region = re.sub(r"^([a-z]{2}-[a-z]+-\d+)[a-z]$", r"\1", raw_region)
         is_local = (environment == "local")
         
         provider_block = f"""# ========================================================
