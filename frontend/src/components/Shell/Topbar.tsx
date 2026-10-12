@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   PanelLeft,
   Search,
-  Layers,
   Server,
   Cpu,
   Radio,
@@ -21,6 +20,7 @@ import { cn } from '../../lib/utils';
 import { useTheme } from '../../context/ThemeContext';
 import { NavView } from './Sidebar';
 import { Connection } from '../../types';
+import logoImg from '../../assets/logo.png';
 
 export interface TopbarProps {
   onToggleSidebar: () => void;
@@ -231,12 +231,14 @@ export const Topbar: React.FC<TopbarProps> = ({
         </button>
 
         <div className="flex items-center gap-2.5">
-          <div className="h-7 w-7 rounded-lg bg-brand/10 border border-brand/30 flex items-center justify-center text-brand-text">
-            <Layers className="h-4 w-4" aria-hidden="true" />
-          </div>
+          <img
+            src={logoImg}
+            alt="Kintsugi"
+            className="h-8 w-auto object-contain shrink-0"
+          />
           <div className="flex items-center gap-2">
             <span className="font-bold text-sm tracking-tight text-ink-primary">
-              VELLUM
+              KINTSUGI
             </span>
             <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-brand/10 text-brand-text border border-brand/20">
               v1.0
