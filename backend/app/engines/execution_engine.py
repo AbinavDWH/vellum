@@ -34,20 +34,25 @@ class WorkspaceLock:
         self.lock_path = plan_dir / ".vellum_workspace.lock"
         self._fd = None
 
-    def acquire(self) -> bool:
-        try:
-            self.plan_dir.mkdir(parents=True, exist_ok=True)
-            self._fd = open(self.lock_path, "w")
-            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except (IOError, BlockingIOError, PermissionError):
-            if self._fd:
-                try:
-                    self._fd.close()
-                except Exception:
-                    pass
-                self._fd = None
-            return False
+    def acquire(self, timeout: float = 0.0) -> bool:
+        start = time.time()
+        while True:
+            try:
+                self.plan_dir.mkdir(parents=True, exist_ok=True)
+                self._fd = open(self.lock_path, "w")
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except (IOError, BlockingIOError, PermissionError):
+                if self._fd:
+                    try:
+                        self._fd.close()
+                    except Exception:
+                        pass
+                    self._fd = None
+                if timeout > 0 and (time.time() - start) < timeout:
+                    time.sleep(0.1)
+                    continue
+                return False
 
     def release(self):
         if self._fd:
@@ -417,7 +422,7 @@ class ExecutionEngine:
 
         p_dir = Path(plan_dir)
         lock = WorkspaceLock(p_dir)
-        if not lock.acquire():
+        if not lock.acquire(timeout=2.0):
             err = f"Workspace {plan_dir} is locked by another running execution. Single-writer concurrency violation."
             log(f"🛑 Error: {err}")
             return ExecutionResult(

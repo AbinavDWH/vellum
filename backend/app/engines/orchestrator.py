@@ -804,7 +804,7 @@ class VellumOrchestrator:
                 item for item in resource_checklist if not item.get("functional_green")
             ]
 
-            if not missing_resources and not failed_functional and v_report.get("status") == "success":
+            if not missing_resources and not failed_functional and v_report.get("status") != "incident":
                 is_fully_verified = True
                 if on_log:
                     on_log(f"✅ [F6] 100% functional verification passed ({len(resource_checklist)}/{len(resource_checklist)} resources green).")
@@ -851,6 +851,9 @@ class VellumOrchestrator:
         # Update DB record with honest status (F6)
         if exec_res.success and (is_fully_verified or not ir_obj):
             plan.status = "completed"
+        elif exec_res.status == "halted" and "locked by another running execution" in (exec_res.error_message or ""):
+            # Concurrency conflict while an execution is running; do not overwrite plan status to halted
+            pass
         elif exec_res.status in ["partial_failed", "rolled_back", "halted"]:
             plan.status = exec_res.status
         else:

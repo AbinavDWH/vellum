@@ -262,12 +262,13 @@ class VerificationEngine:
 
             if r_type in ["object_storage", "storage_bucket", "s3_bucket", "bucket", "static_site", "website_hosting"]:
                 bucket_name = props.get("bucket_name", r_name.replace("_", "-"))
-                if bucket_name in live_buckets or any(b in bucket_name or bucket_name in b for b in live_buckets):
+                actual_bucket = bucket_name if bucket_name in live_buckets else next((b for b in live_buckets if b == bucket_name or b.startswith(f"{bucket_name}-") or bucket_name in b), None)
+                if actual_bucket:
                     matched = True
                     try:
-                        s3.head_bucket(Bucket=bucket_name)
+                        s3.head_bucket(Bucket=actual_bucket)
                         functional_green = True
-                        diag_message = "HeadBucket confirmed bucket available"
+                        diag_message = f"HeadBucket confirmed bucket '{actual_bucket}' available"
 
                         # F2/F6 Check: If bucket is configured for static website hosting, verify HTTP 200
                         is_site = (
@@ -281,10 +282,10 @@ class VerificationEngine:
                             try:
                                 import httpx
                                 if is_local:
-                                    test_url = f"{self.endpoint_url}/{bucket_name}/index.html"
+                                    test_url = f"{self.endpoint_url}/{actual_bucket}/index.html"
                                     h_resp = httpx.get(test_url, timeout=3.0)
                                 else:
-                                    test_url = f"http://{bucket_name}.s3-website-{target_region}.amazonaws.com"
+                                    test_url = f"http://{actual_bucket}.s3-website-{target_region}.amazonaws.com"
                                     h_resp = httpx.get(test_url, timeout=5.0)
                                 if h_resp.status_code == 200:
                                     diag_message = f"HeadBucket passed and static website endpoint returned HTTP 200 (ETag: {h_resp.headers.get('etag', '')})"

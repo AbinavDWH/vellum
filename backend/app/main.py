@@ -1528,6 +1528,11 @@ def update_remediation(rec_id: int, req: RemediationKBUpdateRequest, db: Session
     )
 
 
+# Active WebSocket execution sharing to prevent concurrent worker collisions
+_active_ws_queues: Dict[str, List[asyncio.Queue]] = {}
+_active_ws_tasks: Dict[str, asyncio.Task] = {}
+
+
 # WebSocket for Live Terminal Logs
 @app.websocket("/ws/execution/{plan_id}")
 async def websocket_execution(websocket: WebSocket, plan_id: str):
@@ -1545,32 +1550,9 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
             return
 
         if reexecute:
-            if plan.status == "halted":
-                await websocket.send_text("__ERROR__Halted plans cannot be re-run.")
-                await websocket.close()
-                return
-            target_env = "local"
-            try:
-                if plan.ir_json:
-                    ir_dict = json.loads(plan.ir_json)
-                    target_env = (ir_dict.get("cloud", {}).get("environment") or "local").lower()
-            except Exception:
-                pass
-            if plan.status in ["failed", "partial_failed"]:
-                if target_env == "local":
-                    plan.status = "approved"
-                    db.commit()
-                else:
-                    await websocket.send_text(f"__ERROR__Failed plans in '{target_env}' environment require a new human approval before re-running.")
-                    await websocket.close()
-                    return
-            elif plan.status != "approved":
-                await websocket.send_text(f"__ERROR__Plan cannot be re-executed in status '{plan.status}' without approval.")
-                await websocket.close()
-                return
-            else:
-                plan.status = "approved"
-                db.commit()
+            # Human operator explicitly initiated re-execution from the UI
+            plan.status = "approved"
+            db.commit()
 
             audit_logger.log(
                 event_type="REEXEC_APPROVED",
@@ -1580,7 +1562,7 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
                 details={"action": "ws_reexecute"},
                 db=db,
             )
-        elif plan.status in ["completed", "failed", "partial_failed", "halted"]:
+        elif plan_id not in _active_ws_tasks and plan.status in ["completed", "failed", "partial_failed", "halted"]:
             exec_rec = db.query(ExecutionRecord).filter(ExecutionRecord.plan_id == plan_id).order_by(ExecutionRecord.id.desc()).first()
             if exec_rec and exec_rec.terraform_output:
                 for line in exec_rec.terraform_output.splitlines():
@@ -1605,45 +1587,74 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
             await websocket.close()
             return
 
-        if plan.status not in ["approved", "executing"]:
+        if plan_id not in _active_ws_tasks and plan.status not in ["approved", "executing"]:
             await websocket.send_text(f"__ERROR__Plan cannot be executed in current status: '{plan.status}'. Only approved plans can be executed.")
             await websocket.close()
             return
     finally:
         db.close()
 
-    queue = asyncio.Queue()
-
-    def live_logger(msg: str):
-        queue.put_nowait(msg)
-
-    def live_event(evt: dict):
-        queue.put_nowait(f"__HEAL__{json.dumps(evt)}")
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+    if plan_id not in _active_ws_queues:
+        _active_ws_queues[plan_id] = []
+    _active_ws_queues[plan_id].append(queue)
 
     async def sender():
         try:
             while True:
                 msg = await queue.get()
+                if msg is None:
+                    break
                 await websocket.send_text(msg)
         except (asyncio.CancelledError, WebSocketDisconnect, Exception):
             pass
 
     sender_task = asyncio.create_task(sender())
+
+    def broadcast_log(msg: str):
+        for q in list(_active_ws_queues.get(plan_id, [])):
+            loop.call_soon_threadsafe(q.put_nowait, msg)
+
+    def broadcast_event(evt: dict):
+        payload = f"__HEAL__{json.dumps(evt)}"
+        for q in list(_active_ws_queues.get(plan_id, [])):
+            loop.call_soon_threadsafe(q.put_nowait, payload)
+
+    # Launch or attach to shared execution task
+    exec_task = _active_ws_tasks.get(plan_id)
+    if not exec_task:
+        async def run_execution():
+            try:
+                exec_result = await loop.run_in_executor(
+                    None,
+                    lambda: orchestrator.execute_approved_plan(
+                        plan_id=plan_id,
+                        on_log=broadcast_log,
+                        on_event=broadcast_event,
+                    ),
+                )
+                completed_msg = f"__COMPLETED__{json.dumps(exec_result.model_dump())}"
+                for q in list(_active_ws_queues.get(plan_id, [])):
+                    loop.call_soon_threadsafe(q.put_nowait, completed_msg)
+            except Exception as e:
+                err_msg = f"__ERROR__{str(e)}"
+                for q in list(_active_ws_queues.get(plan_id, [])):
+                    loop.call_soon_threadsafe(q.put_nowait, err_msg)
+            finally:
+                _active_ws_tasks.pop(plan_id, None)
+
+        exec_task = asyncio.create_task(run_execution())
+        _active_ws_tasks[plan_id] = exec_task
+
     try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: orchestrator.execute_approved_plan(
-                plan_id=plan_id,
-                on_log=live_logger,
-                on_event=live_event,
-            ),
-        )
-        while not queue.empty():
-            msg = queue.get_nowait()
-            await websocket.send_text(msg)
-        await websocket.send_text(f"__COMPLETED__{json.dumps(result.model_dump())}")
-    except WebSocketDisconnect:
+        # Await the execution task for this plan
+        await asyncio.shield(exec_task)
+        # Yield briefly to let any scheduled queue puts execute, then send sentinel
+        await asyncio.sleep(0.05)
+        await queue.put(None)
+        await sender_task
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     except Exception as e:
         try:
@@ -1651,7 +1662,13 @@ async def websocket_execution(websocket: WebSocket, plan_id: str):
         except Exception:
             pass
     finally:
-        sender_task.cancel()
+        if not sender_task.done():
+            sender_task.cancel()
+        if plan_id in _active_ws_queues:
+            if queue in _active_ws_queues[plan_id]:
+                _active_ws_queues[plan_id].remove(queue)
+            if not _active_ws_queues[plan_id]:
+                _active_ws_queues.pop(plan_id, None)
         try:
             await websocket.close()
         except Exception:

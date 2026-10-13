@@ -239,3 +239,66 @@ def test_aws_adapter_terraform_nat_gateway_and_elastic_ip():
     assert 'allocation_id = aws_eip.nat_eip.id' in tf_code
     assert 'subnet_id     = aws_subnet.public_subnet_1.id' in tf_code
 
+
+def test_aws_adapter_nat_gateway_with_interpolated_refs():
+    """Test that interpolated refs like ${nat_eip.id} and ${public_subnet_1.id} generate clean HCL."""
+    from app.adapters.cloud.aws import AWSAdapter
+    from app.schemas.ir import UniversalIR
+    from app.schemas.cloud import CloudPlan, CloudResource
+
+    adapter = AWSAdapter()
+    ir = UniversalIR(
+        intent="deploy_cloud",
+        cloud=CloudPlan(
+            provider="aws",
+            environment="prod",
+            resources=[
+                CloudResource(name="vpc", type="vpc", properties={"cidr_block": "10.0.0.0/16"}),
+                CloudResource(name="public_subnet_1a", type="subnet", properties={"cidr_block": "10.0.1.0/24", "map_public_ip_on_launch": True}),
+                CloudResource(name="nat_eip", type="elastic_ip", properties={"vpc": True}),
+                CloudResource(
+                    name="nat_gw",
+                    type="nat_gateway",
+                    properties={
+                        "allocation_id": "${nat_eip.id}",
+                        "subnet_id": "${public_subnet_1a.id}",
+                    },
+                ),
+            ]
+        )
+    )
+
+    tf_code = adapter.generate_terraform(ir, environment="prod")
+    assert 'allocation_id = aws_eip.nat_eip.id' in tf_code
+    assert 'subnet_id     = aws_subnet.public_subnet_1a.id' in tf_code
+    assert '${' not in tf_code or '${{' in tf_code  # No raw ${var} interpolation outside JSON policies
+
+
+def test_aws_adapter_object_storage_child_resources():
+    """Test that object_storage child types map to valid aws_s3_bucket_* Terraform resources."""
+    from app.adapters.cloud.aws import AWSAdapter
+    from app.schemas.ir import UniversalIR
+    from app.schemas.cloud import CloudPlan, CloudResource
+
+    adapter = AWSAdapter()
+    ir = UniversalIR(
+        intent="deploy_cloud",
+        cloud=CloudPlan(
+            provider="aws",
+            environment="prod",
+            resources=[
+                CloudResource(name="test46", type="object_storage", properties={"bucket_name": "test46"}),
+                CloudResource(name="test46_versioning", type="object_storage_versioning", properties={"bucket": "test46", "status": "Enabled"}),
+                CloudResource(name="test46_encryption", type="object_storage_encryption", properties={"bucket": "test46", "sse_algorithm": "AES256"}),
+                CloudResource(name="test46_public_access_block", type="object_storage_public_access_block", properties={"bucket": "test46", "block_public_acls": True}),
+            ]
+        )
+    )
+
+    tf_code = adapter.generate_terraform(ir, environment="prod")
+    assert 'resource "aws_s3_bucket" "test46"' in tf_code
+    assert 'resource "aws_s3_bucket_versioning" "test46_versioning"' in tf_code
+    assert 'resource "aws_s3_bucket_server_side_encryption_configuration" "test46_encryption"' in tf_code
+    assert 'resource "aws_s3_bucket_public_access_block" "test46_public_access_block"' in tf_code
+    assert 'aws_object_storage' not in tf_code
+

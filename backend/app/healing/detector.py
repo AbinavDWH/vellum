@@ -66,6 +66,10 @@ class ErrorDetector:
         re.compile(r'(?i)(Error:\s+Unsupported\s+block\s+type)'),
         re.compile(r'(?i)(syntax\s+error\s+in\s+.*\.tf)'),
         re.compile(r'(?i)(Error:\s+Invalid\s+attribute\s+name)'),
+        re.compile(r'(?i)(Error:\s+Invalid\s+resource\s+type)'),
+        re.compile(r'(?i)(does\s+not\s+support\s+resource\s+type)'),
+        re.compile(r'(?i)(This\s+character\s+is\s+not\s+used\s+within\s+the\s+language)'),
+        re.compile(r'(?i)(An\s+attribute\s+name\s+is\s+required\s+after\s+a\s+dot)'),
     ]
 
     SQL_SYNTAX_PATTERNS = [

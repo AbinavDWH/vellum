@@ -41,10 +41,11 @@ class ScopeFidelityValidator:
         # Storage
         "object_storage", "s3_bucket", "storage_bucket", "bucket", "s3", "aws_s3_bucket",
         "static_site", "website_hosting", "website",
-        "bucket_versioning", "aws_s3_bucket_versioning",
-        "bucket_encryption", "aws_s3_bucket_server_side_encryption_configuration",
-        "bucket_public_access_block",
-        "aws_s3_bucket_website_configuration", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy",
+        "bucket_versioning", "object_storage_versioning", "s3_versioning", "s3_bucket_versioning", "aws_s3_bucket_versioning",
+        "bucket_encryption", "object_storage_encryption", "s3_encryption", "s3_bucket_encryption", "object_storage_server_side_encryption_configuration", "aws_s3_bucket_server_side_encryption_configuration",
+        "bucket_public_access_block", "object_storage_public_access_block", "s3_public_access_block", "s3_bucket_public_access_block",
+        "bucket_website_configuration", "object_storage_website_configuration", "s3_website_configuration", "aws_s3_bucket_website_configuration",
+        "bucket_policy", "object_storage_policy", "s3_policy", "s3_bucket_policy", "aws_s3_bucket_public_access_block", "aws_s3_bucket_policy",
 
         # Compute
         "compute_instance", "ec2", "instance", "server", "aws_instance",

@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from app.adapters.cloud.base import CloudProviderAdapter
 from app.config import settings
 
@@ -12,22 +12,34 @@ class AWSAdapter(CloudProviderAdapter):
         "virtual_network": "aws_vpc",
         "vpc": "aws_vpc",
         "network": "aws_vpc",
+        "aws_vpc": "aws_vpc",
         "subnet": "aws_subnet",
+        "public_subnet": "aws_subnet",
+        "private_subnet": "aws_subnet",
+        "aws_subnet": "aws_subnet",
         "security_group": "aws_security_group",
         "security_rule": "aws_security_group",
         "sg": "aws_security_group",
+        "aws_security_group": "aws_security_group",
+        "security_group_rule": "aws_security_group_rule",
+        "aws_security_group_rule": "aws_security_group_rule",
         "internet_gateway": "aws_internet_gateway",
+        "igw": "aws_internet_gateway",
+        "gateway": "aws_internet_gateway",
+        "aws_internet_gateway": "aws_internet_gateway",
         "nat_gateway": "aws_nat_gateway",
+        "nat": "aws_nat_gateway",
+        "aws_nat_gateway": "aws_nat_gateway",
         "eip": "aws_eip",
         "elastic_ip": "aws_eip",
         "aws_eip": "aws_eip",
         "route_table": "aws_route_table",
+        "aws_route_table": "aws_route_table",
         "route": "aws_route",
         "aws_route": "aws_route",
         "route_table_association": "aws_route_table_association",
+        "subnet_route_table_association": "aws_route_table_association",
         "aws_route_table_association": "aws_route_table_association",
-        "public_subnet": "aws_subnet",
-        "private_subnet": "aws_subnet",
 
         # Databases
         "managed_database": "aws_db_instance",
@@ -35,9 +47,15 @@ class AWSAdapter(CloudProviderAdapter):
         "rds": "aws_db_instance",
         "rds_instance": "aws_db_instance",
         "db_instance": "aws_db_instance",
+        "database_instance": "aws_db_instance",
+        "managed_database_instance": "aws_db_instance",
+        "aws_db_instance": "aws_db_instance",
         "db_subnet_group": "aws_db_subnet_group",
         "rds_subnet_group": "aws_db_subnet_group",
         "subnet_group": "aws_db_subnet_group",
+        "database_subnet_group": "aws_db_subnet_group",
+        "managed_database_subnet_group": "aws_db_subnet_group",
+        "aws_db_subnet_group": "aws_db_subnet_group",
 
         # Caching
         "elasticache": "aws_elasticache_cluster",
@@ -45,9 +63,14 @@ class AWSAdapter(CloudProviderAdapter):
         "cache": "aws_elasticache_cluster",
         "cache_cluster": "aws_elasticache_cluster",
         "redis": "aws_elasticache_cluster",
+        "memcached": "aws_elasticache_cluster",
         "redis_cluster": "aws_elasticache_replication_group",
         "elasticache_replication_group": "aws_elasticache_replication_group",
+        "cache_subnet_group": "aws_elasticache_subnet_group",
         "elasticache_subnet_group": "aws_elasticache_subnet_group",
+        "aws_elasticache_cluster": "aws_elasticache_cluster",
+        "aws_elasticache_replication_group": "aws_elasticache_replication_group",
+        "aws_elasticache_subnet_group": "aws_elasticache_subnet_group",
 
         # Storage
         "object_storage": "aws_s3_bucket",
@@ -55,19 +78,45 @@ class AWSAdapter(CloudProviderAdapter):
         "s3_bucket": "aws_s3_bucket",
         "bucket": "aws_s3_bucket",
         "s3": "aws_s3_bucket",
+        "aws_s3_bucket": "aws_s3_bucket",
         "static_site": "aws_s3_bucket",
         "website_hosting": "aws_s3_bucket",
         "website": "aws_s3_bucket",
+
+        # S3 Features & Child Resources
         "bucket_versioning": "aws_s3_bucket_versioning",
+        "object_storage_versioning": "aws_s3_bucket_versioning",
+        "s3_versioning": "aws_s3_bucket_versioning",
+        "s3_bucket_versioning": "aws_s3_bucket_versioning",
         "aws_bucket_versioning": "aws_s3_bucket_versioning",
         "aws_s3_bucket_versioning": "aws_s3_bucket_versioning",
+
         "bucket_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "object_storage_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "s3_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "s3_bucket_encryption": "aws_s3_bucket_server_side_encryption_configuration",
         "aws_bucket_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "aws_s3_bucket_encryption": "aws_s3_bucket_server_side_encryption_configuration",
+        "bucket_server_side_encryption_configuration": "aws_s3_bucket_server_side_encryption_configuration",
+        "object_storage_server_side_encryption_configuration": "aws_s3_bucket_server_side_encryption_configuration",
         "aws_s3_bucket_server_side_encryption_configuration": "aws_s3_bucket_server_side_encryption_configuration",
+
         "bucket_public_access_block": "aws_s3_bucket_public_access_block",
+        "object_storage_public_access_block": "aws_s3_bucket_public_access_block",
+        "s3_public_access_block": "aws_s3_bucket_public_access_block",
+        "s3_bucket_public_access_block": "aws_s3_bucket_public_access_block",
         "aws_bucket_public_access_block": "aws_s3_bucket_public_access_block",
         "aws_s3_bucket_public_access_block": "aws_s3_bucket_public_access_block",
+
+        "bucket_website_configuration": "aws_s3_bucket_website_configuration",
+        "object_storage_website_configuration": "aws_s3_bucket_website_configuration",
+        "s3_website_configuration": "aws_s3_bucket_website_configuration",
         "aws_s3_bucket_website_configuration": "aws_s3_bucket_website_configuration",
+
+        "bucket_policy": "aws_s3_bucket_policy",
+        "object_storage_policy": "aws_s3_bucket_policy",
+        "s3_policy": "aws_s3_bucket_policy",
+        "s3_bucket_policy": "aws_s3_bucket_policy",
         "aws_s3_bucket_policy": "aws_s3_bucket_policy",
 
         # Compute
@@ -75,25 +124,35 @@ class AWSAdapter(CloudProviderAdapter):
         "ec2": "aws_instance",
         "instance": "aws_instance",
         "server": "aws_instance",
+        "virtual_machine": "aws_instance",
+        "vm": "aws_instance",
+        "aws_instance": "aws_instance",
 
         # Messaging & NoSQL
         "sqs": "aws_sqs_queue",
         "sqs_queue": "aws_sqs_queue",
         "queue": "aws_sqs_queue",
+        "aws_sqs_queue": "aws_sqs_queue",
         "sns": "aws_sns_topic",
         "sns_topic": "aws_sns_topic",
         "topic": "aws_sns_topic",
+        "aws_sns_topic": "aws_sns_topic",
         "dynamodb": "aws_dynamodb_table",
         "dynamodb_table": "aws_dynamodb_table",
+        "nosql_table": "aws_dynamodb_table",
+        "aws_dynamodb_table": "aws_dynamodb_table",
 
         # Security & Secrets & IAM
         "secret": "aws_secretsmanager_secret",
         "secretsmanager": "aws_secretsmanager_secret",
         "secrets_manager": "aws_secretsmanager_secret",
+        "aws_secretsmanager_secret": "aws_secretsmanager_secret",
         "iam_role": "aws_iam_role",
         "role": "aws_iam_role",
+        "aws_iam_role": "aws_iam_role",
         "lambda": "aws_lambda_function",
         "lambda_function": "aws_lambda_function",
+        "aws_lambda_function": "aws_lambda_function",
     }
 
     def get_provider_name(self) -> str:
@@ -101,6 +160,65 @@ class AWSAdapter(CloudProviderAdapter):
 
     def get_local_endpoint(self) -> str:
         return ""
+
+    @staticmethod
+    def _clean_tf_ref(
+        val: Any,
+        target_type: str,
+        default_name: Optional[str] = None,
+        mapped_resources: Optional[List[Dict[str, Any]]] = None,
+        attr: str = "id",
+        filter_fn: Optional[Callable[[Dict[str, Any]], bool]] = None,
+    ) -> str:
+        """
+        Produce a valid HCL Terraform resource reference or literal identifier.
+        Eliminates malformed interpolations like aws_subnet.${foo.id}.id or "${foo.id}".
+        """
+        if not val:
+            if mapped_resources:
+                candidates = [r for r in mapped_resources if r.get("tf_type") == target_type]
+                if filter_fn:
+                    filtered = [r for r in candidates if filter_fn(r)]
+                    if filtered:
+                        candidates = filtered
+                if candidates:
+                    return f"{target_type}.{candidates[0]['name']}.{attr}"
+            if default_name:
+                return f"{target_type}.{default_name}.{attr}"
+            return f"{target_type}.main.{attr}"
+
+        s = str(val).strip()
+        # Strip outer quotes if any
+        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+            s = s[1:-1].strip()
+
+        # Check for literal AWS IDs or ARNs
+        aws_literal_prefixes = ("subnet-", "vpc-", "igw-", "rtb-", "eipalloc-", "vol-", "ami-", "sg-", "arn:", "tg-")
+        if any(s.startswith(p) for p in aws_literal_prefixes):
+            return f'"{s}"'
+
+        # Strip ${ ... }
+        if s.startswith("${") and s.endswith("}"):
+            s = s[2:-1].strip()
+
+        # If s has a resource prefix like "aws_subnet." or "aws_vpc."
+        if s.startswith("aws_"):
+            parts = s.split(".")
+            if len(parts) >= 2:
+                res_type_part = parts[0]
+                res_name_part = parts[1]
+                attr_part = parts[2] if len(parts) >= 3 else attr
+                return f"{res_type_part}.{res_name_part}.{attr_part}"
+
+        # If s is in format "resource_name.id" or "resource_name.arn"
+        if "." in s:
+            parts = s.split(".")
+            res_name = parts[0]
+            attr_part = parts[1] if len(parts) > 1 else attr
+            return f"{target_type}.{res_name}.{attr_part}"
+
+        # Otherwise s is just the logical resource name, e.g. "nat_eip", "public_subnet_1a"
+        return f"{target_type}.{s}.{attr}"
 
     def map_resources(self, universal_ir: Dict[str, Any]) -> List[Dict[str, Any]]:
         cloud = universal_ir.get("cloud")
@@ -119,7 +237,12 @@ class AWSAdapter(CloudProviderAdapter):
             ):
                 res_type = "subnet"
 
-            if res_type.startswith("aws_"):
+            clean_type = res_type[4:] if res_type.startswith("aws_") else res_type
+            if res_type in self.MAPPING:
+                tf_type = self.MAPPING[res_type]
+            elif clean_type in self.MAPPING:
+                tf_type = self.MAPPING[clean_type]
+            elif res_type.startswith("aws_"):
                 tf_type = res_type
             else:
                 tf_type = self.MAPPING.get(res_type, f"aws_{res_type}")
@@ -328,7 +451,7 @@ provider "aws" {{
                 cidr = props.get("cidr_block", "10.0.1.0/24")
                 default_reg = getattr(settings, "DEFAULT_AWS_REGION", "us-east-1")
                 az = props.get("availability_zone", f"{default_reg}a")
-                vpc_ref = f"aws_vpc.{props.get('vpc_name', vpcs[0]['name'] if vpcs else 'main_vpc')}.id"
+                vpc_ref = self._clean_tf_ref(props.get("vpc_name") or props.get("vpc_id"), "aws_vpc", default_name=vpcs[0]['name'] if vpcs else 'main_vpc', mapped_resources=mapped_resources)
                 is_public = bool(
                     props.get("map_public_ip_on_launch") is True
                     or props.get("public") is True
@@ -351,7 +474,7 @@ provider "aws" {{
 """)
 
             elif tf_type == "aws_internet_gateway":
-                vpc_ref = f"aws_vpc.{props.get('vpc_name', vpcs[0]['name'] if vpcs else 'main_vpc')}.id"
+                vpc_ref = self._clean_tf_ref(props.get("vpc_name") or props.get("vpc_id"), "aws_vpc", default_name=vpcs[0]['name'] if vpcs else 'main_vpc', mapped_resources=mapped_resources)
                 blocks.append(f"""resource "aws_internet_gateway" "{name}" {{
   vpc_id = {vpc_ref}
 
@@ -363,7 +486,7 @@ provider "aws" {{
 """)
 
             elif tf_type == "aws_route_table":
-                vpc_ref = f"aws_vpc.{props.get('vpc_name', vpcs[0]['name'] if vpcs else 'main_vpc')}.id"
+                vpc_ref = self._clean_tf_ref(props.get("vpc_name") or props.get("vpc_id"), "aws_vpc", default_name=vpcs[0]['name'] if vpcs else 'main_vpc', mapped_resources=mapped_resources)
                 blocks.append(f"""resource "aws_route_table" "{name}" {{
   vpc_id = {vpc_ref}
 
@@ -375,23 +498,25 @@ provider "aws" {{
 """)
 
             elif tf_type == "aws_route":
-                rt_name = props.get("route_table_name")
-                rt_ref = f"aws_route_table.{rt_name}.id" if rt_name else props.get("route_table_id", "aws_route_table.public.id")
-                igw_name = props.get("gateway_name")
-                igw_ref = f"aws_internet_gateway.{igw_name}.id" if igw_name else props.get("gateway_id", "aws_internet_gateway.igw.id")
+                rt_ref = self._clean_tf_ref(props.get("route_table_name") or props.get("route_table_id"), "aws_route_table", default_name="public", mapped_resources=mapped_resources)
                 dest_cidr = props.get("destination_cidr_block", "0.0.0.0/0")
+                if props.get("nat_gateway_name") or props.get("nat_gateway_id"):
+                    nat_ref = self._clean_tf_ref(props.get("nat_gateway_name") or props.get("nat_gateway_id"), "aws_nat_gateway", default_name="nat_gw", mapped_resources=mapped_resources)
+                    target_gw_line = f"  nat_gateway_id         = {nat_ref}"
+                else:
+                    igw_ref = self._clean_tf_ref(props.get("gateway_name") or props.get("gateway_id"), "aws_internet_gateway", default_name="igw", mapped_resources=mapped_resources)
+                    target_gw_line = f"  gateway_id             = {igw_ref}"
+
                 blocks.append(f"""resource "aws_route" "{name}" {{
   route_table_id         = {rt_ref}
   destination_cidr_block = "{dest_cidr}"
-  gateway_id             = {igw_ref}
+{target_gw_line}
 }}
 """)
 
             elif tf_type == "aws_route_table_association":
-                sub_name = props.get("subnet_name")
-                sub_ref = f"aws_subnet.{sub_name}.id" if sub_name else props.get("subnet_id")
-                rt_name = props.get("route_table_name")
-                rt_ref = f"aws_route_table.{rt_name}.id" if rt_name else props.get("route_table_id")
+                sub_ref = self._clean_tf_ref(props.get("subnet_name") or props.get("subnet_id"), "aws_subnet", mapped_resources=mapped_resources)
+                rt_ref = self._clean_tf_ref(props.get("route_table_name") or props.get("route_table_id"), "aws_route_table", mapped_resources=mapped_resources)
                 blocks.append(f"""resource "aws_route_table_association" "{name}" {{
   subnet_id      = {sub_ref}
   route_table_id = {rt_ref}
@@ -468,11 +593,7 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
                 blocks.append(bucket_block)
 
             elif tf_type == "aws_s3_bucket_versioning":
-                bucket_ref_name = props.get("bucket_name") or props.get("bucket")
-                if not bucket_ref_name:
-                    matching_b = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_s3_bucket"), None)
-                    bucket_ref_name = matching_b
-                b_ref = f"aws_s3_bucket.{bucket_ref_name}.id" if bucket_ref_name and not str(bucket_ref_name).startswith("arn:") else (f'"{bucket_ref_name}"' if bucket_ref_name else "aws_s3_bucket.main.id")
+                b_ref = self._clean_tf_ref(props.get("bucket_name") or props.get("bucket") or props.get("bucket_id"), "aws_s3_bucket", default_name="main", mapped_resources=mapped_resources)
                 status = props.get("status", "Enabled")
                 blocks.append(f"""resource "aws_s3_bucket_versioning" "{name}" {{
   bucket = {b_ref}
@@ -483,11 +604,7 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 """)
 
             elif tf_type == "aws_s3_bucket_server_side_encryption_configuration":
-                bucket_ref_name = props.get("bucket_name") or props.get("bucket")
-                if not bucket_ref_name:
-                    matching_b = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_s3_bucket"), None)
-                    bucket_ref_name = matching_b
-                b_ref = f"aws_s3_bucket.{bucket_ref_name}.id" if bucket_ref_name and not str(bucket_ref_name).startswith("arn:") else (f'"{bucket_ref_name}"' if bucket_ref_name else "aws_s3_bucket.main.id")
+                b_ref = self._clean_tf_ref(props.get("bucket_name") or props.get("bucket") or props.get("bucket_id"), "aws_s3_bucket", default_name="main", mapped_resources=mapped_resources)
                 sse_algo = props.get("sse_algorithm", "AES256")
                 blocks.append(f"""resource "aws_s3_bucket_server_side_encryption_configuration" "{name}" {{
   bucket = {b_ref}
@@ -501,11 +618,7 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 """)
 
             elif tf_type == "aws_s3_bucket_public_access_block":
-                bucket_ref_name = props.get("bucket_name") or props.get("bucket")
-                if not bucket_ref_name:
-                    matching_b = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_s3_bucket"), None)
-                    bucket_ref_name = matching_b
-                b_ref = f"aws_s3_bucket.{bucket_ref_name}.id" if bucket_ref_name and not str(bucket_ref_name).startswith("arn:") else (f'"{bucket_ref_name}"' if bucket_ref_name else "aws_s3_bucket.main.id")
+                b_ref = self._clean_tf_ref(props.get("bucket_name") or props.get("bucket") or props.get("bucket_id"), "aws_s3_bucket", default_name="main", mapped_resources=mapped_resources)
                 blocks.append(f"""resource "aws_s3_bucket_public_access_block" "{name}" {{
   bucket = {b_ref}
 
@@ -517,7 +630,7 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 """)
 
             elif tf_type == "aws_security_group":
-                vpc_ref = f"aws_vpc.{props.get('vpc_name', vpcs[0]['name'] if vpcs else 'main_vpc')}.id"
+                vpc_ref = self._clean_tf_ref(props.get("vpc_name") or props.get("vpc_id"), "aws_vpc", default_name=vpcs[0]['name'] if vpcs else 'main_vpc', mapped_resources=mapped_resources)
                 desc = props.get("description", "Vellum Managed Security Group")
                 ports = props.get("ingress_ports", [5432])
                 cidrs = props.get("cidr_blocks", ["10.0.0.0/16"])
@@ -591,13 +704,7 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
                     all_subnets = [r["name"] for r in mapped_resources if r["tf_type"] == "aws_subnet"]
                     sub_names = all_subnets if all_subnets else ["public_subnet_1"]
 
-                clean_refs = []
-                for s in sub_names:
-                    s_str = str(s).replace("${", "").replace("}", "").replace(".id", "").replace("aws_subnet.", "").strip()
-                    if s_str.startswith("subnet-"):
-                        clean_refs.append(f'"{s_str}"')
-                    else:
-                        clean_refs.append(f"aws_subnet.{s_str}.id")
+                clean_refs = [self._clean_tf_ref(s, "aws_subnet", mapped_resources=mapped_resources) for s in sub_names]
                 subnet_refs = ", ".join(clean_refs)
 
                 blocks.append(f"""resource "aws_db_subnet_group" "{name}" {{
@@ -635,7 +742,8 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 
             elif tf_type == "aws_elasticache_subnet_group":
                 sub_names = props.get("subnet_names") or props.get("subnet_ids") or [r["name"] for r in mapped_resources if r["tf_type"] == "aws_subnet"]
-                subnet_refs = ", ".join([f"aws_subnet.{s}.id" if not str(s).startswith("subnet-") else f'"{s}"' for s in sub_names])
+                clean_refs = [self._clean_tf_ref(s, "aws_subnet", mapped_resources=mapped_resources) for s in sub_names]
+                subnet_refs = ", ".join(clean_refs)
                 blocks.append(f"""resource "aws_elasticache_subnet_group" "{name}" {{
   name       = "{name.replace('_', '-')}"
   subnet_ids = [{subnet_refs}]
@@ -757,32 +865,19 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
 """)
 
             elif tf_type == "aws_nat_gateway":
-                eip_name = props.get("eip_name") or props.get("allocation_id")
-                if not eip_name:
-                    matching_eip = next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_eip"), None)
-                    eip_name = matching_eip
-
-                if eip_name and not str(eip_name).startswith("eipalloc-"):
-                    alloc_ref = f"aws_eip.{eip_name}.id"
-                elif eip_name:
-                    alloc_ref = f'"{eip_name}"'
-                else:
-                    alloc_ref = f"aws_eip.{name}_eip.id"
-
-                sub_name = props.get("subnet_name") or props.get("subnet_id")
-                if not sub_name:
-                    matching_sub = next(
-                        (r["name"] for r in mapped_resources if r["tf_type"] == "aws_subnet" and (r["properties"].get("map_public_ip_on_launch") or "public" in r["name"].lower())),
-                        next((r["name"] for r in mapped_resources if r["tf_type"] == "aws_subnet"), None)
-                    )
-                    sub_name = matching_sub
-
-                if sub_name and not str(sub_name).startswith("subnet-"):
-                    sub_ref = f"aws_subnet.{sub_name}.id"
-                elif sub_name:
-                    sub_ref = f'"{sub_name}"'
-                else:
-                    sub_ref = "aws_subnet.main.id"
+                alloc_ref = self._clean_tf_ref(
+                    props.get("allocation_id") or props.get("eip_name"),
+                    "aws_eip",
+                    default_name=f"{name}_eip",
+                    mapped_resources=mapped_resources,
+                )
+                sub_ref = self._clean_tf_ref(
+                    props.get("subnet_id") or props.get("subnet_name"),
+                    "aws_subnet",
+                    default_name="main",
+                    mapped_resources=mapped_resources,
+                    filter_fn=lambda r: bool(r.get("properties", {}).get("map_public_ip_on_launch") or "public" in r.get("name", "").lower()),
+                )
 
                 blocks.append(f"""resource "aws_nat_gateway" "{name}" {{
   allocation_id = {alloc_ref}
@@ -866,4 +961,21 @@ resource "aws_s3_bucket_policy" "{name}_public_read" {{
         if outputs:
             blocks.append("\n# Outputs\n" + "\n".join(outputs))
 
-        return "\n".join(blocks)
+        hcl_text = "\n".join(blocks)
+        # Sanitization pass: eliminate any malformed interpolations like aws_foo.${bar.id}.id or aws_foo.${bar}
+        hcl_text = re.sub(
+            r'([a-zA-Z0-9_]+)\.\$\{([a-zA-Z0-9_]+)(?:\.id)?\}\.id',
+            r'\1.\2.id',
+            hcl_text,
+        )
+        hcl_text = re.sub(
+            r'([a-zA-Z0-9_]+)\.\$\{([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\}',
+            r'\1.\2.\3',
+            hcl_text,
+        )
+        hcl_text = re.sub(
+            r'([a-zA-Z0-9_]+)\.\$\{([a-zA-Z0-9_]+)\}',
+            r'\1.\2',
+            hcl_text,
+        )
+        return hcl_text
