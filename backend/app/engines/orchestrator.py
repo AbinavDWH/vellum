@@ -24,6 +24,7 @@ from app.schemas.api import ChatResponse, PlanResponse, ExecutionResult, Verific
 from app.schemas.ir import UniversalIR, ClarificationQuestion, ClarificationResponse
 from app.environment.inventory import environment_inventory
 from app.validation.environment_conflict import environment_conflict_validator
+from app.naming import make_names_unique
 from app.requirements import requirements_manager
 from app.target import resolve_target, ProductionConnectionRequiredError
 
@@ -289,6 +290,11 @@ class VellumOrchestrator:
         else:
             ir = annotated_ir
 
+        # Unique physical names: S3 names are global and other names collide on re-deploy.
+        # Names the user typed (request or requirements.md) are kept exactly as typed.
+        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
+        make_names_unique(ir, f"{prompt}\n{current_req_md or ''}", plan_id)
+
         # Pre-Flight Environment Introspection & Conflict Prevention (M-15)
         user_choices = environment_conflict_validator.parse_user_choices_from_prompt(prompt)
         target_region = ir.cloud.region if ir.cloud else "us-east-1"
@@ -374,7 +380,6 @@ class VellumOrchestrator:
             ir.implementation_plan = self._build_implementation_plan(ir)
 
         # 6. Generate Code
-        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
         plan_dir = tf_generator.generate(ir, environment=target_res.environment, plan_id=plan_id)
         
         main_tf_path = f"{plan_dir}/main.tf"

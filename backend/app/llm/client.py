@@ -263,6 +263,11 @@ class HybridLLMClient:
                 self.groq.default_model = model
             elif prov == "local":
                 self.lm_studio._detected_model = model
+        else:
+            if prov == "groq":
+                self._active_model = self.groq.default_model
+            elif prov == "local":
+                self._active_model = self.lm_studio.get_active_model()
 
     def is_healthy(self) -> bool:
         """Return True if the single active AI backend is available."""

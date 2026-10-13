@@ -1,0 +1,288 @@
+diff --git a/backend/app/engines/orchestrator.py b/backend/app/engines/orchestrator.py
+index d71266f..eb2c430 100644
+--- a/backend/app/engines/orchestrator.py
++++ b/backend/app/engines/orchestrator.py
+@@ -24,6 +24,7 @@ from app.schemas.api import ChatResponse, PlanResponse, ExecutionResult, Verific
+ from app.schemas.ir import UniversalIR, ClarificationQuestion, ClarificationResponse
+ from app.environment.inventory import environment_inventory
+ from app.validation.environment_conflict import environment_conflict_validator
++from app.naming import make_names_unique
+ from app.requirements import requirements_manager
+ from app.target import resolve_target, ProductionConnectionRequiredError
+ 
+@@ -289,6 +290,11 @@ class VellumOrchestrator:
+         else:
+             ir = annotated_ir
+ 
++        # Unique physical names: S3 names are global and other names collide on re-deploy.
++        # Names the user typed (request or requirements.md) are kept exactly as typed.
++        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
++        make_names_unique(ir, f"{prompt}\n{current_req_md or ''}", plan_id)
++
+         # Pre-Flight Environment Introspection & Conflict Prevention (M-15)
+         user_choices = environment_conflict_validator.parse_user_choices_from_prompt(prompt)
+         target_region = ir.cloud.region if ir.cloud else "us-east-1"
+@@ -374,7 +380,6 @@ class VellumOrchestrator:
+             ir.implementation_plan = self._build_implementation_plan(ir)
+ 
+         # 6. Generate Code
+-        plan_id = f"plan_{uuid.uuid4().hex[:8]}"
+         plan_dir = tf_generator.generate(ir, environment=target_res.environment, plan_id=plan_id)
+         
+         main_tf_path = f"{plan_dir}/main.tf"
+diff --git a/backend/app/llm/prompts.py b/backend/app/llm/prompts.py
+index de2a6d0..43f5f54 100644
+--- a/backend/app/llm/prompts.py
++++ b/backend/app/llm/prompts.py
+@@ -192,7 +192,8 @@ SCOPE FIDELITY RULES (CRITICAL):
+ 3. NEVER include networking (VPC, subnets, internet gateway) unless the user EXPLICITLY mentions network, vpc, or subnets.
+ 4. NEVER include databases (RDS, PostgreSQL, MySQL, MongoDB tables/collections) unless the user EXPLICITLY mentions data, storage, persistence, tables, or database.
+ 5. NEVER add KMS keys, encryption extras, or multi-AZ unless explicitly requested by the user.
+-6. For EVERY technical dependency added that was not explicitly requested, you MUST document it in "assumptions" with the exact reason in format:
++6. NAMES: set bucket_name / identifier / queue_name / table_name / role_name ONLY if the user typed that exact name. Otherwise OMIT them (never invent generic names like app-bucket); the system adds a unique suffix.
++7. For EVERY technical dependency added that was not explicitly requested, you MUST document it in "assumptions" with the exact reason in format:
+    "Required because: <reason>".
+ 
+ Example 3 (Object storage only - zero VPC/networking/RDS):
+diff --git a/backend/app/naming.py b/backend/app/naming.py
+new file mode 100644
+index 0000000..365a2f3
+--- /dev/null
++++ b/backend/app/naming.py
+@@ -0,0 +1,110 @@
++"""Make physical AWS resource names unique per plan.
++
++Why: generic names ("app-data-bucket", "app-queue", ...) collide.
++  * S3 bucket names are global across ALL AWS accounts, so a generic name fails on the very
++    first deploy ("BucketAlreadyExists").
++  * SQS / SNS / DynamoDB / IAM / RDS names are unique per account (and region), so a second
++    plan with the same name fails ("already exists").
++
++Rule: if the USER typed a name (in the request or in requirements.md) we keep it exactly.
++Otherwise we append a short suffix taken from the plan id, e.g. app-data-bucket-dbeed1.
++
++Only the resource's OWN physical name property is changed. Terraform labels (resource.name)
++and references from other resources (versioning, encryption, ...) are left alone, because the
++AWS adapter references buckets by label, not by physical name.
++"""
++import re
++from typing import Any, Dict, List, Optional, Tuple
++
++import structlog
++
++logger = structlog.get_logger(__name__)
++
++# terraform type -> (property holding the physical name, max length, style)
++_RULES: Dict[str, Tuple[str, int, str]] = {
++    "aws_s3_bucket": ("bucket_name", 63, "dns"),
++    "aws_db_instance": ("identifier", 63, "dns_letter"),
++    "aws_sqs_queue": ("queue_name", 80, "plain"),
++    "aws_sns_topic": ("topic_name", 256, "plain"),
++    "aws_dynamodb_table": ("table_name", 255, "plain"),
++    "aws_iam_role": ("role_name", 64, "plain"),
++}
++
++# A name that already ends in "-<6 hex>" was suffixed by us earlier (e.g. a revised plan).
++_ALREADY_SUFFIXED = re.compile(r"-[0-9a-f]{6}$")
++
++
++def plan_suffix(plan_id: str) -> str:
++    """'plan_dbeed1f3' -> 'dbeed1'."""
++    return re.sub(r"[^0-9a-f]", "", plan_id.split("_", 1)[-1].lower())[:6] or "000000"
++
++
++def _stated(name: str, text: str) -> bool:
++    """True if the user typed this exact name (whole token) in the request/requirements."""
++    low = text.lower()
++    for candidate in {name.lower(), name.lower().replace("_", "-")}:
++        if candidate and re.search(r"(?<![a-z0-9_.\-])" + re.escape(candidate) + r"(?![a-z0-9_.\-])", low):
++            return True
++    return False
++
++
++def _clean(base: str, style: str) -> str:
++    if style in ("dns", "dns_letter"):
++        base = re.sub(r"[^a-z0-9.\-]", "", base.lower().replace("_", "-"))
++        base = re.sub(r"-{2,}", "-", base).strip("-.")
++        if style == "dns_letter" and (not base or not base[0].isalpha()):
++            base = "db-" + base
++        return base or ("bucket" if style == "dns" else "db")
++    return re.sub(r"\s+", "-", base.strip()) or "resource"
++
++
++def make_names_unique(ir: Any, user_text: str, plan_id: str, mapping: Optional[Dict[str, str]] = None) -> List[Dict[str, str]]:
++    """Mutates ir.cloud.resources in place. Returns a list of {type, old, new} changes."""
++    cloud = getattr(ir, "cloud", None)
++    resources = getattr(cloud, "resources", None) or []
++    if mapping is None:
++        from app.adapters.cloud.aws import AWSAdapter
++        mapping = AWSAdapter.MAPPING
++
++    suffix = plan_suffix(plan_id)
++    changes: List[Dict[str, str]] = []
++
++    for res in resources:
++        tf_type = mapping.get(res.type, res.type)
++        rule = _RULES.get(tf_type)
++        if not rule:
++            continue
++        key, max_len, style = rule
++        props = res.properties if isinstance(res.properties, dict) else {}
++
++        # Same lookup order the AWS adapter uses to pick the physical name.
++        current = props.get(key) or props.get("name") or res.name
++        if not current or str(current).startswith(("arn:", "${", "var.", "aws_")):
++            continue
++        current = str(current)
++
++        if _stated(current, user_text) or _ALREADY_SUFFIXED.search(current):
++            continue
++
++        base = _clean(current, style)
++        room = max_len - len(suffix) - 1
++        new = f"{base[:room].rstrip('-.')}-{suffix}"
++        if new == current:
++            continue
++
++        props[key] = new
++        if key == "bucket_name" and "bucket" in props:
++            props["bucket"] = new
++        res.properties = props
++        res.status_chip = f"NAME_UNIQUE → {new}"
++        changes.append({"type": tf_type, "old": current, "new": new})
++
++    if changes:
++        note = "Names made unique for AWS: " + "; ".join(f"{c['old']} → {c['new']}" for c in changes) + \
++               ". Put your own name in the request to keep it exactly."
++        try:
++            ir.assumptions = list(ir.assumptions or []) + [note]
++        except Exception:
++            pass
++        logger.info("Unique resource names applied", plan_id=plan_id, changes=changes)
++    return changes
+diff --git a/backend/tests/test_unique_names.py b/backend/tests/test_unique_names.py
+new file mode 100644
+index 0000000..e8f63e1
+--- /dev/null
++++ b/backend/tests/test_unique_names.py
+@@ -0,0 +1,120 @@
++"""Generic resource names must not repeat between plans (S3 names are global)."""
++import json, os, re
++from types import SimpleNamespace as NS
++from fastapi.testclient import TestClient
++from app.main import app
++from app.config import settings
++from app.llm.client import llm_client
++from app.naming import make_names_unique, plan_suffix
++from app.schemas.cloud import CloudPlan, CloudResource
++
++
++def _ir(*resources):
++    return NS(cloud=CloudPlan(provider="aws", region="us-east-1", environment="dev", resources=list(resources)), assumptions=[])
++
++
++def _bucket(name="app_bucket", bucket_name=None, **extra):
++    props = {"bucket_name": bucket_name} if bucket_name else {}
++    props.update(extra)
++    return CloudResource(type="object_storage", name=name, properties=props)
++
++
++def test_suffix_comes_from_plan_id():
++    assert plan_suffix("plan_dbeed1f3") == "dbeed1"
++
++
++def test_generic_bucket_gets_suffix():
++    ir = _ir(_bucket(bucket_name="app-data-bucket"))
++    ch = make_names_unique(ir, "create an s3 bucket", "plan_dbeed1f3")
++    assert ir.cloud.resources[0].properties["bucket_name"] == "app-data-bucket-dbeed1"
++    assert ch and ch[0]["old"] == "app-data-bucket"
++    assert any("Names made unique" in a for a in ir.assumptions)
++
++
++def test_two_plans_never_share_a_bucket_name():
++    a, b = _ir(_bucket(bucket_name="app-data-bucket")), _ir(_bucket(bucket_name="app-data-bucket"))
++    make_names_unique(a, "create an s3 bucket", "plan_11111111")
++    make_names_unique(b, "create an s3 bucket", "plan_22222222")
++    assert a.cloud.resources[0].properties["bucket_name"] != b.cloud.resources[0].properties["bucket_name"]
++
++
++def test_name_typed_by_user_is_kept_exactly():
++    ir = _ir(_bucket(bucket_name="my-logs-123"))
++    assert make_names_unique(ir, "create an s3 bucket named my-logs-123", "plan_dbeed1f3") == []
++    assert ir.cloud.resources[0].properties["bucket_name"] == "my-logs-123"
++
++
++def test_name_typed_in_requirements_md_is_kept():
++    ir = _ir(_bucket(bucket_name="team-assets"))
++    assert make_names_unique(ir, "add versioning\n- s3_bucket: name=team-assets", "plan_dbeed1f3") == []
++
++
++def test_similar_prefix_in_prompt_does_not_count_as_stated():
++    ir = _ir(_bucket(bucket_name="my-logs"))
++    assert make_names_unique(ir, "create bucket my-logs-123", "plan_dbeed1f3")
++
++
++def test_name_taken_from_logical_name_when_property_missing():
++    ir = _ir(_bucket(name="site_bucket"))
++    make_names_unique(ir, "create a bucket", "plan_dbeed1f3")
++    assert ir.cloud.resources[0].properties["bucket_name"] == "site-bucket-dbeed1"
++
++
++def test_no_double_suffix_on_revised_plan():
++    ir = _ir(_bucket(bucket_name="app-data-bucket-dbeed1"))
++    assert make_names_unique(ir, "add versioning", "plan_99999999") == []
++
++
++def test_dependents_and_labels_untouched():
++    ver = CloudResource(type="bucket_versioning", name="ver", properties={"bucket_name": "app_bucket"})
++    ir = _ir(_bucket(name="app_bucket", bucket_name="app-data-bucket"), ver)
++    make_names_unique(ir, "create a bucket", "plan_dbeed1f3")
++    assert ir.cloud.resources[0].name == "app_bucket"                       # terraform label unchanged
++    assert ir.cloud.resources[1].properties["bucket_name"] == "app_bucket"  # reference unchanged
++
++
++def test_long_names_stay_within_aws_limits():
++    ir = _ir(_bucket(bucket_name="a" * 80))
++    make_names_unique(ir, "x", "plan_dbeed1f3")
++    n = ir.cloud.resources[0].properties["bucket_name"]
++    assert len(n) <= 63 and re.fullmatch(r"[a-z0-9][a-z0-9.\-]*[a-z0-9]", n)
++
++
++def test_other_account_level_names():
++    rds = CloudResource(type="managed_database", name="main_db", properties={})
++    sqs = CloudResource(type="queue", name="jobs", properties={})
++    role = CloudResource(type="iam_role", name="app_role", properties={})
++    ir = _ir(rds, sqs, role)
++    make_names_unique(ir, "create db queue role", "plan_dbeed1f3")
++    r, q, i = (x.properties for x in ir.cloud.resources)
++    assert r["identifier"] == "main-db-dbeed1" and r["identifier"][0].isalpha()
++    assert q["queue_name"].endswith("-dbeed1") and i["role_name"].endswith("-dbeed1")
++
++
++def test_unrelated_resources_untouched():
++    vpc = CloudResource(type="virtual_network", name="main_vpc", properties={"cidr_block": "10.0.0.0/16"})
++    ir = _ir(vpc)
++    assert make_names_unique(ir, "create a vpc", "plan_dbeed1f3") == []
++    assert ir.cloud.resources[0].properties == {"cidr_block": "10.0.0.0/16"}
++
++
++def test_end_to_end_two_requests_get_different_bucket_names_in_terraform(monkeypatch):
++    """Offline fallback planner used to hardcode 'app-data-bucket' for every request."""
++    monkeypatch.setattr(llm_client, "is_healthy", lambda: False)
++    client = TestClient(app)
++    names, plan_ids = [], []
++    for _ in range(2):
++        sid = client.post("/api/sessions", json={}).json()
++        sid = sid.get("id") or sid.get("session_id")
++        r = client.post("/api/chat", json={"prompt": "create an s3 bucket", "session_id": sid, "environment": "dev"})
++        assert r.status_code == 200, r.text
++        m = re.search(r'"plan_id":\s*"(plan_[0-9a-f]+)"', json.dumps(r.json()))
++        assert m, r.text[:300]
++        plan_ids.append(m.group(1))
++        tf = open(os.path.join(settings.TERRAFORM_WORKSPACE, m.group(1), "main.tf")).read()
++        found = re.findall(r'bucket\s*=\s*"([^"]+)"', tf)
++        assert found, tf[:300]
++        names.append(found[0])
++    assert plan_ids[0] != plan_ids[1]
++    assert names[0] != names[1], names
++    assert all(n.startswith("app-data-bucket-") for n in names), names

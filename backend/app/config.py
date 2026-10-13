@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     REQUIREMENTS_MAX_CHARS: int = 12000       # ~3000 tokens; longer requirements.md is trimmed in the prompt
 
     # Groq API
-    GROQ_API_KEY: Optional[str] =None
-    GROQ_MODEL: str = "qwen/qwen3.8-27b"
-    GROQ_FALLBACK_MODEL: str = "qwen/qwen3.8-27b"
+    GROQ_API_KEY: Optional[str] = None
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
+    GROQ_FALLBACK_MODEL: str = "openai/gpt-oss-20b"
     GROQ_API_URL: str = "https://api.groq.com/openai/v1"
     GROQ_TIMEOUT: float = 30.0
 
@@ -86,7 +86,12 @@ class Settings(BaseSettings):
     TERRAFORM_BINARY: str = "terraform"
 
     model_config = {
-        "env_file": [".env", "../.env"],
+        "env_file": [
+            ".env",
+            "../.env",
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".env")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env")),
+        ],
         "extra": "allow"
     }
 

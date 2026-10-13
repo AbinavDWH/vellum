@@ -192,7 +192,8 @@ SCOPE FIDELITY RULES (CRITICAL):
 3. NEVER include networking (VPC, subnets, internet gateway) unless the user EXPLICITLY mentions network, vpc, or subnets.
 4. NEVER include databases (RDS, PostgreSQL, MySQL, MongoDB tables/collections) unless the user EXPLICITLY mentions data, storage, persistence, tables, or database.
 5. NEVER add KMS keys, encryption extras, or multi-AZ unless explicitly requested by the user.
-6. For EVERY technical dependency added that was not explicitly requested, you MUST document it in "assumptions" with the exact reason in format:
+6. NAMES: set bucket_name / identifier / queue_name / table_name / role_name ONLY if the user typed that exact name. Otherwise OMIT them (never invent generic names like app-bucket); the system adds a unique suffix.
+7. For EVERY technical dependency added that was not explicitly requested, you MUST document it in "assumptions" with the exact reason in format:
    "Required because: <reason>".
 
 Example 3 (Object storage only - zero VPC/networking/RDS):
