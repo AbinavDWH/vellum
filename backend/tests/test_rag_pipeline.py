@@ -195,8 +195,16 @@ class TestHybridRetrieverAndReranking:
 class TestProductionRAGIntegration:
     """End-to-end integration test of live knowledge base."""
 
+    def setup_method(self):
+        """Ensure knowledge base is ingested and indexed before running search tests."""
+        service = RAGService()
+        if service.store.count_chunks() == 0:
+            service.ingest_knowledge_base()
+
     def test_live_knowledge_base_retrieval(self):
         service = RAGService()
+        if service.store.count_chunks() == 0:
+            service.ingest_knowledge_base()
         stats = service.get_stats()
         assert stats["total_chunks"] >= 30
 
@@ -244,8 +252,16 @@ class TestQueryExpander:
 class TestGoldenBenchmarkEvaluation:
     """Layer 8: Golden Dataset Quantitative Benchmark."""
 
+    def setup_method(self):
+        """Ensure knowledge base is ingested and indexed before running benchmark."""
+        service = RAGService()
+        if service.store.count_chunks() == 0:
+            service.ingest_knowledge_base()
+
     def test_golden_dataset_metrics(self):
         service = RAGService()
+        if service.store.count_chunks() == 0:
+            service.ingest_knowledge_base()
         result = service.run_benchmark(top_k=5)
 
         assert result.total_queries >= 8
@@ -258,8 +274,16 @@ class TestGoldenBenchmarkEvaluation:
 class TestRAGObservability:
     """Layer 9: Retrieval Tracing and SLO Metrics."""
 
+    def setup_method(self):
+        """Ensure knowledge base is ingested and indexed before running search observability tests."""
+        service = RAGService()
+        if service.store.count_chunks() == 0:
+            service.ingest_knowledge_base()
+
     def test_search_generates_trace(self):
         service = RAGService()
+        if service.store.count_chunks() == 0:
+            service.ingest_knowledge_base()
         unique_query = "Configure PostgreSQL on RDS with encryption unique test"
         service.search(unique_query, top_k=3)
         traces = service.get_traces(limit=5)

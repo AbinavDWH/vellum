@@ -252,7 +252,8 @@ def test_m20_targeted_auto_rollback_and_deletion_protection(tmp_path):
     (plan_dir / "main.tf").write_text('resource "aws_vpc" "v" {}\nresource "aws_db_instance" "db" {}')
 
     # Mock _run_streaming_command and state list
-    with patch.object(execution_engine, "_run_streaming_command") as mock_run_cmd, \
+    with patch("shutil.which", return_value="/usr/bin/terraform"), \
+         patch.object(execution_engine, "_run_streaming_command") as mock_run_cmd, \
          patch.object(execution_engine, "_get_terraform_state_resources") as mock_get_state:
 
         mock_run_cmd.return_value = (0, "Destroy complete! Resources: 1 destroyed.", False)

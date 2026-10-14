@@ -192,9 +192,14 @@ class AWSAdapter(CloudProviderAdapter):
         if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
             s = s[1:-1].strip()
 
-        # Check for literal AWS IDs or ARNs
-        aws_literal_prefixes = ("subnet-", "vpc-", "igw-", "rtb-", "eipalloc-", "vol-", "ami-", "sg-", "arn:", "tg-")
-        if any(s.startswith(p) for p in aws_literal_prefixes):
+        # Check for literal AWS ARNs
+        if s.startswith("arn:"):
+            return f'"{s}"'
+
+        # Only treat a value as a real AWS ID if it has the correct shape:
+        # prefix followed by a run of hex characters (8 to 32 chars, e.g. subnet-0abc123def456789a or vpc-12345678).
+        # Any other value (e.g. vpc-main, subnet-public, sg-web) is a resource name and treated as a Terraform reference.
+        if re.match(r"^(?:subnet|vpc|igw|rtb|eipalloc|vol|ami|sg|tg|nat)-[0-9a-fA-F]{8,32}$", s):
             return f'"{s}"'
 
         # Strip ${ ... }
@@ -208,6 +213,12 @@ class AWSAdapter(CloudProviderAdapter):
                 res_type_part = parts[0]
                 res_name_part = parts[1]
                 attr_part = parts[2] if len(parts) >= 3 else attr
+                if mapped_resources:
+                    clean_res = res_name_part.replace("-", "_")
+                    match = next((r["name"] for r in mapped_resources if r.get("tf_type") == res_type_part and r.get("name") in (res_name_part, clean_res)), None)
+                    res_name_part = match or clean_res
+                else:
+                    res_name_part = res_name_part.replace("-", "_")
                 return f"{res_type_part}.{res_name_part}.{attr_part}"
 
         # If s is in format "resource_name.id" or "resource_name.arn"
@@ -215,10 +226,23 @@ class AWSAdapter(CloudProviderAdapter):
             parts = s.split(".")
             res_name = parts[0]
             attr_part = parts[1] if len(parts) > 1 else attr
+            if mapped_resources:
+                clean_res = res_name.replace("-", "_")
+                match = next((r["name"] for r in mapped_resources if r.get("tf_type") == target_type and r.get("name") in (res_name, clean_res)), None)
+                res_name = match or clean_res
+            else:
+                res_name = res_name.replace("-", "_")
             return f"{target_type}.{res_name}.{attr_part}"
 
-        # Otherwise s is just the logical resource name, e.g. "nat_eip", "public_subnet_1a"
-        return f"{target_type}.{s}.{attr}"
+        # Otherwise s is just the logical resource name, e.g. "nat_eip", "public_subnet_1a", "vpc-main"
+        res_name = s
+        if mapped_resources:
+            clean_res = res_name.replace("-", "_")
+            match = next((r["name"] for r in mapped_resources if r.get("tf_type") == target_type and r.get("name") in (res_name, clean_res)), None)
+            res_name = match or clean_res
+        else:
+            res_name = res_name.replace("-", "_")
+        return f"{target_type}.{res_name}.{attr}"
 
     def map_resources(self, universal_ir: Dict[str, Any]) -> List[Dict[str, Any]]:
         cloud = universal_ir.get("cloud")

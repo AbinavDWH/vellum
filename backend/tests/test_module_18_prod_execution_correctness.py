@@ -308,7 +308,8 @@ def test_m18_rollback_execution(tmp_path):
     workspace.mkdir()
     (workspace / "main.tf").write_text('provider "aws" {}\n')
 
-    with patch.object(execution_engine, "_run_streaming_command") as mock_run_cmd, \
+    with patch("shutil.which", return_value="/usr/bin/terraform"), \
+         patch.object(execution_engine, "_run_streaming_command") as mock_run_cmd, \
          patch.object(execution_engine, "_get_terraform_state_resources") as mock_state:
 
         mock_run_cmd.return_value = (0, "Destroy complete! Resources: 1 destroyed.", False)

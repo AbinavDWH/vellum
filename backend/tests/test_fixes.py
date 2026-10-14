@@ -302,3 +302,49 @@ def test_aws_adapter_object_storage_child_resources():
     assert 'resource "aws_s3_bucket_public_access_block" "test46_public_access_block"' in tf_code
     assert 'aws_object_storage' not in tf_code
 
+
+def test_aws_adapter_distinguishes_real_aws_ids_from_custom_names():
+    """Test that real AWS IDs (e.g. subnet-0abc123def456789a) are kept as string literals,
+    while custom names (e.g. vpc-main, subnet-public) are rendered as Terraform resource references."""
+    from app.adapters.cloud.aws import AWSAdapter
+    from app.schemas.ir import UniversalIR
+    from app.schemas.cloud import CloudPlan, CloudResource
+
+    adapter = AWSAdapter()
+    ir = UniversalIR(
+        intent="deploy_cloud",
+        cloud=CloudPlan(
+            provider="aws",
+            environment="prod",
+            resources=[
+                CloudResource(name="vpc-main", type="vpc", properties={"cidr_block": "10.0.0.0/16"}),
+                CloudResource(
+                    name="subnet-public",
+                    type="subnet",
+                    properties={
+                        "cidr_block": "10.0.1.0/24",
+                        "vpc_id": "vpc-main",
+                        "map_public_ip_on_launch": True,
+                    },
+                ),
+                CloudResource(
+                    name="subnet-fixed",
+                    type="subnet",
+                    properties={
+                        "cidr_block": "10.0.2.0/24",
+                        "vpc_id": "vpc-0abc123def456789a",
+                    },
+                ),
+            ]
+        )
+    )
+
+    tf_code = adapter.generate_terraform(ir, environment="prod")
+    # Custom name "vpc-main" should be referenced as Terraform resource attribute
+    assert 'vpc_id                  = aws_vpc.vpc_main.id' in tf_code
+    # Real AWS ID "vpc-0abc123def456789a" should be kept as string literal
+    assert 'vpc_id                  = "vpc-0abc123def456789a"' in tf_code
+    assert 'resource "aws_subnet" "subnet_public"' in tf_code
+    assert 'resource "aws_subnet" "subnet_fixed"' in tf_code
+
+
